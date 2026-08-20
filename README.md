@@ -86,7 +86,43 @@ Auth (register/login/refresh/logout/password reset), product catalogue + search 
 - **Product image uploads** — admin forms accept image URLs (comma-separated) rather than a file upload widget; seed data uses placeholder images. Swappable for Cloudinary/S3 later.
 - **Product variant editing in admin UI** — variants can be seeded/edited via the API but the admin product form only covers base fields; extend `AdminProductsPage` for full variant editing.
 
-## Deployment Notes
+## Production Deployment — Render + MongoDB Atlas
 
-- Set `NODE_ENV=production`, real JWT secrets, and a production `MONGODB_URI` (e.g. Atlas) before deploying.
-- Serve the client build (`client/dist`) via a static host/CDN and the API from any Node host; set `CLIENT_URL` (server) and `VITE_API_URL` (client) accordingly, and ensure cookies are `secure`/`sameSite=none` across origins in production (already handled in `auth.controller.ts`).
+Single Render Web Service serves both the Express API and the compiled React build (same origin, no CORS/cookie cross-site issues). `render.yaml` in the repo root describes the service.
+
+### MongoDB Atlas
+
+1. Create a free/shared cluster.
+2. Database Access → add a dedicated database user (not your Atlas account login) with read/write access scoped to this database only.
+3. Network Access → add an IP access entry. Render's outbound IPs aren't fixed on the free/starter plan, so for this initial demo add `0.0.0.0/0` (allow from anywhere at the network layer — MongoDB auth with the dedicated user/password still applies). Tighten this later if you move to a plan with static outbound IPs.
+4. Connect → Drivers → copy the `mongodb+srv://...` connection string, fill in the user's password, and set the database name (e.g. `/green-leaf-gardening`) before the `?` query params.
+
+### Render
+
+1. New → Web Service → connect the `green-leaf-gardening` GitHub repo, branch `main`.
+2. Build Command: `npm install && npm run build`
+3. Start Command: `npm start`
+4. Health Check Path: `/api/health`
+5. Add the environment variables listed below.
+6. Deploy. Once you have the assigned `https://<service>.onrender.com` URL, set `CLIENT_URL` to that exact URL and redeploy (needed for CORS + cookies — this is a chicken-and-egg step, unavoidable on first deploy).
+7. Seed demo data once: run `npm run seed` from the Render Shell (Shell tab on the service, if available on your plan), or temporarily point a local `MONGODB_URI` at Atlas and run `npm run seed` from your machine, then unset it. Never expose seeding as a public HTTP endpoint.
+8. Test `/api/health` — should report `"database":"connected"`.
+
+### Environment Variables (set in Render dashboard — never commit these)
+
+| Variable | Value |
+|---|---|
+| `NODE_ENV` | `production` |
+| `MONGODB_URI` | Atlas `mongodb+srv://...` connection string |
+| `JWT_ACCESS_SECRET` | strong random secret, different from refresh |
+| `JWT_REFRESH_SECRET` | strong random secret, different from access |
+| `JWT_ACCESS_EXPIRES` | `15m` |
+| `JWT_REFRESH_EXPIRES` | `7d` |
+| `CLIENT_URL` | the Render service's own public URL (same-origin deploy) |
+
+`PORT` is provided automatically by Render — do not set it. `VITE_API_URL` is intentionally left unset in production; the client falls back to same-origin `/api`.
+
+### Notes
+
+- Cookies (`accessToken`, `refreshToken`) are `httpOnly`, `secure` in production, `sameSite=lax` (same-origin deploy, so `lax` is sufficient — no cross-site cookie problem to solve here).
+- Online payment (Razorpay), Cloudinary image uploads, and transactional email are intentionally not wired up in this phase — see "What's Mocked / Simplified" above.

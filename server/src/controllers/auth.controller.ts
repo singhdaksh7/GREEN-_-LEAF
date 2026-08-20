@@ -18,7 +18,7 @@ import {
 const cookieOptions = {
   httpOnly: true,
   secure: env.isProd,
-  sameSite: env.isProd ? ('none' as const) : ('lax' as const),
+  sameSite: 'lax' as const,
 };
 
 function setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
