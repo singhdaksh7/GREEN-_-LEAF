@@ -18,7 +18,11 @@ export function createApp(): Express {
   const app = express();
 
   if (env.isProd) {
-    app.set('trust proxy', 1);
+    // Render's onrender.com domains sit behind Cloudflare in front of Render's own
+    // reverse proxy, so two hops must be trusted to recover the real client IP for
+    // rate limiting; trusting only 1 hop resolves to Cloudflare's rotating edge IP
+    // and makes express-rate-limit bucket requests inconsistently.
+    app.set('trust proxy', 2);
   }
 
   app.use(helmet());
