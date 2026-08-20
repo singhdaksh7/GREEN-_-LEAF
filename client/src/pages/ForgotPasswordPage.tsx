@@ -18,11 +18,15 @@ export function ForgotPasswordPage() {
       <Seo title="Forgot Password" />
       <div className="w-full max-w-sm rounded-2xl border border-gray-100 p-8 shadow-card">
         <h1 className="mb-2 text-center font-display text-2xl font-bold text-gray-900">Forgot Password</h1>
-        <p className="mb-6 text-center text-sm text-gray-500">Enter your email and we&apos;ll send you a reset link.</p>
+        <p className="mb-6 text-center text-sm text-gray-500">
+          Password reset emails aren&apos;t enabled on this demo site yet. Please contact support to reset your
+          password.
+        </p>
 
         {submitted ? (
           <p className="rounded-lg bg-brand-50 p-4 text-center text-sm text-brand-700">
-            If an account exists for {email}, a password reset link has been sent.
+            Thanks — we&apos;ve logged your request for {email}. Since email delivery isn&apos;t configured on this
+            demo yet, please contact support directly to complete your password reset.
           </p>
         ) : (
           <form
