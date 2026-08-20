@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: green-leaf-mongodb
+    restart: unless-stopped
+    ports:
+      - '27017:27017'
+    volumes:
+      - green-leaf-mongo-data:/data/db
+
+volumes:
+  green-leaf-mongo-data:
