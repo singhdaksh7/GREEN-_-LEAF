@@ -59,7 +59,7 @@ export async function createOrder(
   for (const line of priced.lines) {
     if (line.variantSku) {
       const product = await Product.findOneAndUpdate(
-        { _id: line.productId, 'variants.sku': line.variantSku, 'variants.stock': { $gte: line.quantity } },
+        { _id: line.productId, variants: { $elemMatch: { sku: line.variantSku, stock: { $gte: line.quantity } } } },
         { $inc: { 'variants.$.stock': -line.quantity } }
       );
       if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
