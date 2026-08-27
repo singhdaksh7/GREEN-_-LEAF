@@ -1,7 +1,12 @@
 import { Schema, model, Types, Document } from 'mongoose';
 import { IOrderAddress } from './Order';
 
-export type PaymentIntentStatus = 'CREATED' | 'PROCESSING' | 'PAID' | 'FAILED';
+// REQUIRES_REFUND means Razorpay captured the payment but GreenKart could not
+// complete fulfillment (stock/coupon/order commit failed or aborted) — the
+// customer WAS charged and this must be flagged for manual refund, never
+// confused with FAILED (which means Razorpay itself never captured the
+// payment, so nothing needs to be refunded).
+export type PaymentIntentStatus = 'CREATED' | 'PROCESSING' | 'PAID' | 'FAILED' | 'REQUIRES_REFUND';
 
 export interface IPaymentIntentLine {
   productId: Types.ObjectId;
@@ -70,7 +75,7 @@ const paymentIntentSchema = new Schema<IPaymentIntent>(
     razorpayPaymentId: { type: String, default: null },
     amount: { type: Number, required: true },
     currency: { type: String, required: true, default: 'INR' },
-    status: { type: String, enum: ['CREATED', 'PROCESSING', 'PAID', 'FAILED'], default: 'CREATED', index: true },
+    status: { type: String, enum: ['CREATED', 'PROCESSING', 'PAID', 'FAILED', 'REQUIRES_REFUND'], default: 'CREATED', index: true },
     failureReason: { type: String, default: null },
     shippingAddress: { type: paymentIntentAddressSchema, required: true },
     couponCode: { type: String, default: null },

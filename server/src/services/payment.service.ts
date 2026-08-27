@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Order, IOrder } from '../models/Order';
 import { PaymentIntent, IPaymentIntent } from '../models/PaymentIntent';
 import { Product } from '../models/Product';
@@ -114,9 +115,18 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
     throw ApiError.badRequest('This payment has already failed and cannot be finalized');
   }
 
+  if (intent.status === 'REQUIRES_REFUND') {
+    throw ApiError.conflict(
+      'This payment was captured but GreenKart fulfillment previously failed. It requires manual reconciliation and cannot be re-finalized automatically.'
+    );
+  }
+
   // Atomic single-winner claim: only the first caller to see status CREATED
   // transitions it to PROCESSING. This guards double-click, duplicate
-  // verification requests, and a webhook racing the frontend callback.
+  // verification requests, and a webhook racing the frontend callback. It
+  // deliberately runs outside the transaction below: single-document writes
+  // are already atomic, and keeping the lock separate avoids write-conflict
+  // retries between the two callers racing for it.
   const claimed = await PaymentIntent.findOneAndUpdate(
     { _id: intent._id, status: 'CREATED' },
     { $set: { status: 'PROCESSING', razorpayPaymentId } },
@@ -135,76 +145,128 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
     throw ApiError.badRequest('This payment could not be finalized');
   }
 
+  // From this point on, Razorpay has captured the payment and we hold the
+  // sole claim on it. Stock decrement, coupon reservation, Order creation,
+  // and the intent's own PAID transition all happen in one MongoDB
+  // transaction so they commit or roll back together — no partial stock
+  // decrement can survive a later coupon or order-creation failure. The
+  // external Razorpay API call has already completed by this point and is
+  // intentionally never inside this transaction.
+  const session = await mongoose.startSession();
   try {
-    // Decrement stock atomically per line, same pattern as the COD path in
-    // order.service.ts: each update is conditioned on sufficient stock still
-    // being available at write time.
-    for (const line of claimed.lines) {
-      if (line.variantSku) {
-        const product = await Product.findOneAndUpdate(
-          { _id: line.productId, variants: { $elemMatch: { sku: line.variantSku, stock: { $gte: line.quantity } } } },
-          { $inc: { 'variants.$.stock': -line.quantity } }
-        );
-        if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
-      } else {
-        const product = await Product.findOneAndUpdate(
-          { _id: line.productId, stock: { $gte: line.quantity } },
-          { $inc: { stock: -line.quantity } }
-        );
-        if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
+    const order = await session.withTransaction(async () => {
+      for (const line of claimed.lines) {
+        if (line.variantSku) {
+          const product = await Product.findOneAndUpdate(
+            { _id: line.productId, variants: { $elemMatch: { sku: line.variantSku, stock: { $gte: line.quantity } } } },
+            { $inc: { 'variants.$.stock': -line.quantity } },
+            { session }
+          );
+          if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
+        } else {
+          const product = await Product.findOneAndUpdate(
+            { _id: line.productId, stock: { $gte: line.quantity } },
+            { $inc: { stock: -line.quantity } },
+            { session }
+          );
+          if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
+        }
       }
-    }
 
-    const order = await Order.create({
-      orderNumber: generateOrderNumber(),
-      user: claimed.user,
-      items: claimed.lines.map((line) => ({
-        product: line.productId,
-        productName: line.name,
-        productImage: line.image,
-        sku: line.variantSku ?? line.name,
-        variant: line.variant,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
-        totalPrice: line.totalPrice,
-      })),
-      shippingAddress: claimed.shippingAddress,
-      subtotal: claimed.subtotal,
-      discount: claimed.discount,
-      shipping: claimed.shipping,
-      tax: claimed.tax,
-      grandTotal: claimed.grandTotal,
-      couponCode: claimed.couponCode,
-      paymentMethod: 'ONLINE',
-      paymentStatus: 'PAID',
-      razorpayOrderId: claimed.razorpayOrderId,
-      razorpayPaymentId,
-      orderStatus: 'CONFIRMED',
-      statusHistory: [
-        { status: 'PENDING', changedAt: claimed.createdAt },
-        { status: 'CONFIRMED', changedAt: new Date() },
-      ],
+      if (claimed.couponCode) {
+        const reserved = await Coupon.findOneAndUpdate(
+          {
+            code: claimed.couponCode,
+            isActive: true,
+            $or: [{ usageLimit: null }, { $expr: { $lt: ['$usedCount', '$usageLimit'] } }],
+          },
+          { $inc: { usedCount: 1 } },
+          { session }
+        );
+        if (!reserved) throw ApiError.badRequest('This coupon has just reached its usage limit');
+      }
+
+      const [created] = await Order.create(
+        [
+          {
+            orderNumber: generateOrderNumber(),
+            user: claimed.user,
+            items: claimed.lines.map((line) => ({
+              product: line.productId,
+              productName: line.name,
+              productImage: line.image,
+              sku: line.variantSku ?? line.name,
+              variant: line.variant,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              totalPrice: line.totalPrice,
+            })),
+            shippingAddress: claimed.shippingAddress,
+            subtotal: claimed.subtotal,
+            discount: claimed.discount,
+            shipping: claimed.shipping,
+            tax: claimed.tax,
+            grandTotal: claimed.grandTotal,
+            couponCode: claimed.couponCode,
+            paymentMethod: 'ONLINE',
+            paymentStatus: 'PAID',
+            razorpayOrderId: claimed.razorpayOrderId,
+            razorpayPaymentId,
+            orderStatus: 'CONFIRMED',
+            statusHistory: [
+              { status: 'PENDING', changedAt: claimed.createdAt },
+              { status: 'CONFIRMED', changedAt: new Date() },
+            ],
+          },
+        ],
+        { session }
+      );
+
+      await PaymentIntent.updateOne(
+        { _id: claimed._id },
+        { $set: { status: 'PAID', order: created._id } },
+        { session }
+      );
+
+      return created;
     });
 
-    if (claimed.couponCode) {
-      const coupon = await Coupon.findOne({ code: claimed.couponCode });
-      if (coupon) {
-        coupon.usedCount += 1;
-        await coupon.save();
-      }
+    // Clearing the cart is a convenience, not a financial invariant: the
+    // order has already committed above, so a failure here must never be
+    // treated as a fulfillment failure.
+    try {
+      await cartService.clearCart(claimed.user.toString());
+    } catch (clearCartErr) {
+      console.error('Failed to clear cart after a successful Razorpay order', {
+        paymentIntentId: claimed._id,
+        error: clearCartErr,
+      });
     }
 
-    await cartService.clearCart(claimed.user.toString());
-
-    await PaymentIntent.updateOne({ _id: claimed._id }, { $set: { status: 'PAID', order: order._id } });
-
-    return order;
+    return order as IOrder;
   } catch (err) {
+    // The transaction aborted (business rule, e.g. insufficient stock, or an
+    // infrastructure failure) after Razorpay had already captured the
+    // payment. Every stock decrement, coupon reservation, and order
+    // creation attempted inside the transaction has been rolled back
+    // automatically — nothing partial can remain. What must never happen is
+    // silently losing track of the money: flag it for manual refund.
+    const failureReason = err instanceof Error ? err.message : 'Unknown error';
     await PaymentIntent.updateOne(
-      { _id: claimed._id },
-      { $set: { status: 'FAILED', failureReason: err instanceof Error ? err.message : 'Unknown error' } }
+      { _id: claimed._id, status: 'PROCESSING' },
+      { $set: { status: 'REQUIRES_REFUND', failureReason } }
     );
-    throw err;
+    console.error('Razorpay payment captured but GreenKart order fulfillment failed — REQUIRES_REFUND', {
+      paymentIntentId: claimed._id,
+      razorpayOrderId: claimed.razorpayOrderId,
+      razorpayPaymentId,
+      error: failureReason,
+    });
+    throw ApiError.internal(
+      'Your payment was received but we could not complete your order automatically. Our team has been notified and will contact you.'
+    );
+  } finally {
+    await session.endSession();
   }
 }
 
@@ -219,14 +281,25 @@ export async function verifyAndFinalizePayment(userId: string, input: VerifyPaym
 
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = input;
 
-  const expected = computeHmacSha256Hex(env.razorpayKeySecret, `${razorpay_order_id}|${razorpay_payment_id}`);
-  if (!timingSafeEqualHex(expected, razorpay_signature)) {
-    throw ApiError.badRequest('Payment verification failed: invalid signature');
-  }
-
+  // Resolve the PaymentIntent from our own database first, and verify the
+  // signature against the order ID *stored on that record* rather than the
+  // raw client-supplied field. The two happen to be equal by construction of
+  // this lookup, but anchoring the HMAC input to server-loaded state (and
+  // asserting the match explicitly) means a future refactor that starts
+  // deriving the intent some other way — e.g. from a client-supplied intent
+  // id instead of the order id — cannot silently start trusting an
+  // unbound, arbitrary client order id for the signature calculation.
   const intent = await PaymentIntent.findOne({ razorpayOrderId: razorpay_order_id });
   if (!intent) throw ApiError.notFound('Payment session not found');
   if (intent.user.toString() !== userId) throw ApiError.forbidden('This payment does not belong to you');
+  if (intent.razorpayOrderId !== razorpay_order_id) {
+    throw ApiError.badRequest('Payment verification failed: order ID mismatch');
+  }
+
+  const expected = computeHmacSha256Hex(env.razorpayKeySecret, `${intent.razorpayOrderId}|${razorpay_payment_id}`);
+  if (!timingSafeEqualHex(expected, razorpay_signature)) {
+    throw ApiError.badRequest('Payment verification failed: invalid signature');
+  }
 
   return finalizePaymentIntent(intent, razorpay_payment_id);
 }
@@ -251,7 +324,10 @@ export async function processWebhookEvent(payload: RazorpayWebhookPayload): Prom
 
     const intent = await PaymentIntent.findOne({ razorpayOrderId });
     if (!intent) return;
-    if (intent.status === 'PAID') return;
+    // Already in a terminal state: PAID means this event (or the frontend's
+    // own verification) already finalized it; FAILED/REQUIRES_REFUND mean
+    // it's flagged for manual handling and must not be silently reprocessed.
+    if (intent.status === 'PAID' || intent.status === 'FAILED' || intent.status === 'REQUIRES_REFUND') return;
 
     await finalizePaymentIntent(intent, razorpayPaymentId);
     return;
