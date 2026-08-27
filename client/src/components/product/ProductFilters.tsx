@@ -11,6 +11,12 @@ interface ProductFiltersProps {
 const RATING_OPTIONS = [4, 3, 2];
 const DISCOUNT_OPTIONS = [10, 20, 30, 50];
 
+function toNonNegativePriceInput(value: string): string {
+  if (value === '') return '';
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 0 ? value : '';
+}
+
 export function ProductFilters({ minPrice, maxPrice, inStockOnly, minRating, minDiscount, onChange, onClear }: ProductFiltersProps) {
   return (
     <div className="flex flex-col gap-6">
@@ -26,17 +32,19 @@ export function ProductFilters({ minPrice, maxPrice, inStockOnly, minRating, min
         <div className="flex items-center gap-2">
           <input
             type="number"
+            min="0"
             placeholder="Min"
             value={minPrice}
-            onChange={(e) => onChange({ minPrice: e.target.value })}
+            onChange={(e) => onChange({ minPrice: toNonNegativePriceInput(e.target.value) })}
             className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
           />
           <span className="text-gray-400">–</span>
           <input
             type="number"
+            min="0"
             placeholder="Max"
             value={maxPrice}
-            onChange={(e) => onChange({ maxPrice: e.target.value })}
+            onChange={(e) => onChange({ maxPrice: toNonNegativePriceInput(e.target.value) })}
             className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
           />
         </div>
