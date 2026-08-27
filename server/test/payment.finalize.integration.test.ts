@@ -10,6 +10,8 @@ import crypto from 'node:crypto';
 // boots a genuine transaction-capable single-node replica set in memory via
 // mongodb-memory-server, and exercises payment.service against real
 // Mongoose models. Nothing here talks to Atlas or any production database.
+// The Razorpay API itself is always mocked (getRazorpayClient) — no real
+// payment requests are ever made.
 
 const RAZORPAY_KEY_SECRET = 'test_secret_key';
 process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
@@ -22,6 +24,7 @@ vi.mock('../src/utils/razorpay', async () => {
 
 let replset: MongoMemoryReplSet;
 let paymentService: typeof import('../src/services/payment.service');
+let razorpayUtil: typeof import('../src/utils/razorpay');
 let PaymentIntent: typeof import('../src/models/PaymentIntent').PaymentIntent;
 let Order: typeof import('../src/models/Order').Order;
 let Product: typeof import('../src/models/Product').Product;
@@ -32,6 +35,7 @@ beforeAll(async () => {
   await mongoose.connect(replset.getUri(), { dbName: 'razorpay-finalize-test' });
 
   paymentService = await import('../src/services/payment.service');
+  razorpayUtil = await import('../src/utils/razorpay');
   ({ PaymentIntent } = await import('../src/models/PaymentIntent'));
   ({ Order } = await import('../src/models/Order'));
   ({ Product } = await import('../src/models/Product'));
@@ -55,6 +59,21 @@ beforeEach(async () => {
 
 function sign(orderId: string, paymentId: string): string {
   return crypto.createHmac('sha256', RAZORPAY_KEY_SECRET).update(`${orderId}|${paymentId}`).digest('hex');
+}
+
+/** Mocks the Razorpay API's payments.fetch response for the next call(s). */
+function mockRazorpayPaymentStatus(opts: { id: string; order_id: string; amount: number; currency?: string; status?: string }) {
+  vi.mocked(razorpayUtil.getRazorpayClient).mockReturnValue({
+    payments: {
+      fetch: vi.fn().mockResolvedValue({
+        id: opts.id,
+        order_id: opts.order_id,
+        amount: opts.amount,
+        currency: opts.currency ?? 'INR',
+        status: opts.status ?? 'captured',
+      }),
+    },
+  } as any);
 }
 
 function addressFixture() {
@@ -124,6 +143,11 @@ async function createIntent(opts: {
   });
 }
 
+function expectConfirmed(result: Awaited<ReturnType<typeof paymentService.verifyAndFinalizePayment>>) {
+  if (result.status !== 'CONFIRMED') throw new Error(`Expected CONFIRMED, got ${result.status}`);
+  return result.order;
+}
+
 describe('payment finalization atomicity (real MongoDB transaction)', () => {
   it('rolls back an earlier successful stock decrement when a later line in the same order is unavailable', async () => {
     const userId = new Types.ObjectId();
@@ -131,12 +155,9 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     const p2 = await createProduct(1, 'Pruning Shears'); // only 1 in stock, order wants 2
 
     const razorpayOrderId = 'order_multi_fail';
-    await createIntent({
-      userId,
-      razorpayOrderId,
-      lines: [lineFor(p1, 2), lineFor(p2, 2)],
-    });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2), lineFor(p2, 2)] });
     const paymentId = 'pay_multi_fail';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
 
     await expect(
       paymentService.verifyAndFinalizePayment(userId.toString(), {
@@ -150,9 +171,9 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     expect((await Product.findById(p2._id))!.stock).toBe(1);
     expect(await Order.countDocuments({})).toBe(0);
 
-    const intent = await PaymentIntent.findOne({ razorpayOrderId });
-    expect(intent!.status).toBe('REQUIRES_REFUND');
-    expect(intent!.failureReason).toMatch(/insufficient stock/i);
+    const after = await PaymentIntent.findOne({ razorpayOrderId });
+    expect(after!.status).toBe('REQUIRES_REFUND');
+    expect(after!.failureReason).toMatch(/insufficient stock/i);
   });
 
   it('rolls back stock if the coupon reservation fails (usage limit already consumed)', async () => {
@@ -161,8 +182,9 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     await Coupon.create({ code: 'MAXED', type: 'FLAT', value: 10, usageLimit: 1, usedCount: 1, isActive: true });
 
     const razorpayOrderId = 'order_coupon_fail';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'MAXED' });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'MAXED' });
     const paymentId = 'pay_coupon_fail';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
 
     await expect(
       paymentService.verifyAndFinalizePayment(userId.toString(), {
@@ -183,8 +205,9 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     await Coupon.create({ code: 'SAVE10', type: 'FLAT', value: 10, usageLimit: null, usedCount: 0, isActive: true });
 
     const razorpayOrderId = 'order_create_fail';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'SAVE10' });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'SAVE10' });
     const paymentId = 'pay_create_fail';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
 
     const createSpy = vi.spyOn(Order, 'create').mockRejectedValueOnce(new Error('simulated order create failure'));
 
@@ -204,20 +227,22 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('REQUIRES_REFUND');
   });
 
-  it('commits stock decrement, coupon increment, and order creation atomically on success', async () => {
+  it('commits stock decrement, coupon increment, and order creation atomically on a captured payment', async () => {
     const userId = new Types.ObjectId();
     const p1 = await createProduct(10);
     await Coupon.create({ code: 'SAVE10', type: 'FLAT', value: 10, usageLimit: 5, usedCount: 0, isActive: true });
 
     const razorpayOrderId = 'order_success';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'SAVE10' });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'SAVE10' });
     const paymentId = 'pay_success';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
 
-    const order = await paymentService.verifyAndFinalizePayment(userId.toString(), {
+    const result = await paymentService.verifyAndFinalizePayment(userId.toString(), {
       razorpay_order_id: razorpayOrderId,
       razorpay_payment_id: paymentId,
       razorpay_signature: sign(razorpayOrderId, paymentId),
     });
+    const order = expectConfirmed(result);
 
     expect(order.paymentStatus).toBe('PAID');
     expect(order.paymentMethod).toBe('ONLINE');
@@ -228,22 +253,146 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('PAID');
   });
 
+  it('does NOT finalize when the payment is only authorized, not yet captured', async () => {
+    const userId = new Types.ObjectId();
+    const p1 = await createProduct(10);
+    const razorpayOrderId = 'order_authorized_only';
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const paymentId = 'pay_authorized_only';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount, status: 'authorized' });
+
+    const result = await paymentService.verifyAndFinalizePayment(userId.toString(), {
+      razorpay_order_id: razorpayOrderId,
+      razorpay_payment_id: paymentId,
+      razorpay_signature: sign(razorpayOrderId, paymentId),
+    });
+
+    expect(result.status).toBe('PENDING');
+    expect(await Order.countDocuments({})).toBe(0);
+    expect((await Product.findById(p1._id))!.stock).toBe(10);
+    // No claim was ever made — the intent is untouched, free for the
+    // eventual payment.captured/order.paid webhook to finalize.
+    expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('CREATED');
+  });
+
+  it('rejects when the Razorpay-reported order ID does not match the PaymentIntent', async () => {
+    const userId = new Types.ObjectId();
+    const p1 = await createProduct(10);
+    const razorpayOrderId = 'order_mismatch_orderid';
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const paymentId = 'pay_mismatch_orderid';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: 'order_someone_else', amount: intent.amount });
+
+    await expect(
+      paymentService.verifyAndFinalizePayment(userId.toString(), {
+        razorpay_order_id: razorpayOrderId,
+        razorpay_payment_id: paymentId,
+        razorpay_signature: sign(razorpayOrderId, paymentId),
+      })
+    ).rejects.toThrow(/order ID mismatch/i);
+
+    expect(await Order.countDocuments({})).toBe(0);
+    expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('CREATED');
+  });
+
+  it('rejects when the Razorpay-reported amount does not match the PaymentIntent', async () => {
+    const userId = new Types.ObjectId();
+    const p1 = await createProduct(10);
+    const razorpayOrderId = 'order_mismatch_amount';
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const paymentId = 'pay_mismatch_amount';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount - 1 });
+
+    await expect(
+      paymentService.verifyAndFinalizePayment(userId.toString(), {
+        razorpay_order_id: razorpayOrderId,
+        razorpay_payment_id: paymentId,
+        razorpay_signature: sign(razorpayOrderId, paymentId),
+      })
+    ).rejects.toThrow(/amount mismatch/i);
+
+    expect(await Order.countDocuments({})).toBe(0);
+    expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('CREATED');
+  });
+
+  it('rejects when the Razorpay-reported currency is not INR', async () => {
+    const userId = new Types.ObjectId();
+    const p1 = await createProduct(10);
+    const razorpayOrderId = 'order_mismatch_currency';
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const paymentId = 'pay_mismatch_currency';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount, currency: 'USD' });
+
+    await expect(
+      paymentService.verifyAndFinalizePayment(userId.toString(), {
+        razorpay_order_id: razorpayOrderId,
+        razorpay_payment_id: paymentId,
+        razorpay_signature: sign(razorpayOrderId, paymentId),
+      })
+    ).rejects.toThrow(/currency mismatch/i);
+
+    expect(await Order.countDocuments({})).toBe(0);
+    expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('CREATED');
+  });
+
   it('does not mutate anything again on a duplicate verify call for the same payment', async () => {
     const userId = new Types.ObjectId();
     const p1 = await createProduct(10);
     const razorpayOrderId = 'order_dup_verify';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_dup_verify';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
     const body = {
       razorpay_order_id: razorpayOrderId,
       razorpay_payment_id: paymentId,
       razorpay_signature: sign(razorpayOrderId, paymentId),
     };
 
-    const first = await paymentService.verifyAndFinalizePayment(userId.toString(), body);
-    const second = await paymentService.verifyAndFinalizePayment(userId.toString(), body);
+    const first = expectConfirmed(await paymentService.verifyAndFinalizePayment(userId.toString(), body));
+    const second = expectConfirmed(await paymentService.verifyAndFinalizePayment(userId.toString(), body));
 
     expect(second._id.toString()).toBe(first._id.toString());
+    expect(await Order.countDocuments({})).toBe(1);
+    expect((await Product.findById(p1._id))!.stock).toBe(8);
+  });
+
+  it('creates exactly one order when the browser never verifies and a payment.captured webhook arrives instead', async () => {
+    const userId = new Types.ObjectId();
+    const p1 = await createProduct(10);
+    const razorpayOrderId = 'order_webhook_only';
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const paymentId = 'pay_webhook_only';
+
+    await paymentService.processWebhookEvent({
+      event: 'payment.captured',
+      payload: {
+        order: { entity: { id: razorpayOrderId } },
+        payment: { entity: { id: paymentId, order_id: razorpayOrderId, amount: intent.amount, currency: 'INR', status: 'captured' } },
+      },
+    });
+
+    expect(await Order.countDocuments({})).toBe(1);
+    expect((await Product.findById(p1._id))!.stock).toBe(8);
+    expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('PAID');
+  });
+
+  it('creates exactly one order when payment.captured and order.paid both fire for the same payment', async () => {
+    const userId = new Types.ObjectId();
+    const p1 = await createProduct(10);
+    const razorpayOrderId = 'order_both_events';
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const paymentId = 'pay_both_events';
+    const paymentEntity = { id: paymentId, order_id: razorpayOrderId, amount: intent.amount, currency: 'INR', status: 'captured' };
+
+    await paymentService.processWebhookEvent({
+      event: 'payment.captured',
+      payload: { order: { entity: { id: razorpayOrderId } }, payment: { entity: paymentEntity } },
+    });
+    await paymentService.processWebhookEvent({
+      event: 'order.paid',
+      payload: { order: { entity: { id: razorpayOrderId } }, payment: { entity: paymentEntity } },
+    });
+
     expect(await Order.countDocuments({})).toBe(1);
     expect((await Product.findById(p1._id))!.stock).toBe(8);
   });
@@ -252,8 +401,9 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     const userId = new Types.ObjectId();
     const p1 = await createProduct(10);
     const razorpayOrderId = 'order_race';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_race';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
 
     await paymentService.verifyAndFinalizePayment(userId.toString(), {
       razorpay_order_id: razorpayOrderId,
@@ -266,7 +416,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
       event: 'order.paid',
       payload: {
         order: { entity: { id: razorpayOrderId } },
-        payment: { entity: { id: paymentId } },
+        payment: { entity: { id: paymentId, order_id: razorpayOrderId, amount: intent.amount, currency: 'INR', status: 'captured' } },
       },
     });
 
@@ -274,34 +424,13 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     expect((await Product.findById(p1._id))!.stock).toBe(8);
   });
 
-  it('creates exactly one order when the same webhook event is delivered twice', async () => {
-    const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
-    const razorpayOrderId = 'order_dup_webhook';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
-    const paymentId = 'pay_dup_webhook';
-    const eventPayload = {
-      event: 'order.paid',
-      payload: {
-        order: { entity: { id: razorpayOrderId } },
-        payment: { entity: { id: paymentId } },
-      },
-    };
-
-    await paymentService.processWebhookEvent(eventPayload);
-    await paymentService.processWebhookEvent(eventPayload);
-
-    expect(await Order.countDocuments({})).toBe(1);
-    expect((await Product.findById(p1._id))!.stock).toBe(8);
-    expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('PAID');
-  });
-
   it('flags a captured payment as REQUIRES_REFUND (not FAILED) when stock is unavailable at fulfillment time', async () => {
     const userId = new Types.ObjectId();
     const p1 = await createProduct(1); // only 1 available, order wants 2
     const razorpayOrderId = 'order_oos';
-    await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+    const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_oos';
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
 
     await expect(
       paymentService.verifyAndFinalizePayment(userId.toString(), {
@@ -311,11 +440,12 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
       })
     ).rejects.toThrow();
 
-    const intent = await PaymentIntent.findOne({ razorpayOrderId });
-    expect(intent!.status).toBe('REQUIRES_REFUND');
-    expect(intent!.status).not.toBe('FAILED');
+    const after = await PaymentIntent.findOne({ razorpayOrderId });
+    expect(after!.status).toBe('REQUIRES_REFUND');
+    expect(after!.status).not.toBe('FAILED');
 
     // A REQUIRES_REFUND intent must not be silently reprocessed by a retry.
+    mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
     await expect(
       paymentService.verifyAndFinalizePayment(userId.toString(), {
         razorpay_order_id: razorpayOrderId,
@@ -366,5 +496,67 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
     expect(await Order.countDocuments({})).toBe(0);
     expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('CREATED');
+  });
+
+  describe('PROCESSING crash recovery', () => {
+    it('safely recovers a stale PROCESSING intent (crashed worker) and finalizes exactly once', async () => {
+      const userId = new Types.ObjectId();
+      const p1 = await createProduct(10);
+      const razorpayOrderId = 'order_stale_recover';
+      const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+      const paymentId = 'pay_stale_recover';
+
+      // Simulate a worker that claimed the intent and then crashed before
+      // its transaction ever ran: PROCESSING, with a processingStartedAt
+      // well past the staleness threshold.
+      const staleTimestamp = new Date(Date.now() - 6 * 60 * 1000);
+      await PaymentIntent.updateOne(
+        { _id: intent._id },
+        { $set: { status: 'PROCESSING', processingStartedAt: staleTimestamp, razorpayPaymentId: paymentId } }
+      );
+
+      mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
+
+      const result = await paymentService.verifyAndFinalizePayment(userId.toString(), {
+        razorpay_order_id: razorpayOrderId,
+        razorpay_payment_id: paymentId,
+        razorpay_signature: sign(razorpayOrderId, paymentId),
+      });
+      const order = expectConfirmed(result);
+
+      expect(order.paymentStatus).toBe('PAID');
+      expect(await Order.countDocuments({})).toBe(1);
+      expect((await Product.findById(p1._id))!.stock).toBe(8); // decremented exactly once
+      expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('PAID');
+    });
+
+    it('does not let a fresh (non-stale) PROCESSING intent be reclaimed or reprocessed', async () => {
+      const userId = new Types.ObjectId();
+      const p1 = await createProduct(10);
+      const razorpayOrderId = 'order_fresh_processing';
+      const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+      const paymentId = 'pay_fresh_processing';
+
+      // A healthy worker claimed this moments ago and is (for the purposes
+      // of this test) still "mid-transaction".
+      await PaymentIntent.updateOne(
+        { _id: intent._id },
+        { $set: { status: 'PROCESSING', processingStartedAt: new Date(), razorpayPaymentId: paymentId } }
+      );
+
+      mockRazorpayPaymentStatus({ id: paymentId, order_id: razorpayOrderId, amount: intent.amount });
+
+      await expect(
+        paymentService.verifyAndFinalizePayment(userId.toString(), {
+          razorpay_order_id: razorpayOrderId,
+          razorpay_payment_id: paymentId,
+          razorpay_signature: sign(razorpayOrderId, paymentId),
+        })
+      ).rejects.toThrow(/already being processed/i);
+
+      expect(await Order.countDocuments({})).toBe(0);
+      expect((await Product.findById(p1._id))!.stock).toBe(10);
+      expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('PROCESSING');
+    });
   });
 });
