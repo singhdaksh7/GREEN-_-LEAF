@@ -1,59 +1,59 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import mongoose, { Types } from 'mongoose';
-import { MongoMemoryReplSet } from 'mongodb-memory-server';
+import { Types } from 'mongoose';
 import crypto from 'node:crypto';
+import { setupTestDb, teardownTestDb, clearTestDb } from '../helpers/testDb';
 
-// finalizePaymentIntent now runs its stock/coupon/order mutations inside a
-// real MongoDB transaction, which a standalone mongod cannot provide (the
-// project's local docker-compose Mongo is standalone). Rather than weaken
-// production behavior to fit a non-transactional test double, this suite
-// boots a genuine transaction-capable single-node replica set in memory via
-// mongodb-memory-server, and exercises payment.service against real
-// Mongoose models. Nothing here talks to Atlas or any production database.
-// The Razorpay API itself is always mocked (getRazorpayClient) — no real
-// payment requests are ever made.
+// finalizePaymentIntent runs its stock/coupon/order mutations inside a real
+// MongoDB transaction, so this suite uses the same transaction-capable
+// in-memory replica set (setupTestDb) as the rest of the integration suite —
+// nothing here talks to Atlas or any production database. The Razorpay API
+// itself is always mocked (getRazorpayClient) — no real payment requests
+// are ever made.
+//
+// Deliberately NOT statically importing ../helpers/factories (or the model
+// files) here: factories.ts pulls in utils/jwt.ts, which imports
+// config/env.ts, and that module's `env` object is evaluated once and
+// cached for this file's whole run. If that happened before the
+// process.env assignment below, env.razorpayKeySecret would be frozen at
+// '' for every test in this file. Everything that could trigger that chain
+// is imported dynamically inside beforeAll instead, after these are set.
 
 const RAZORPAY_KEY_SECRET = 'test_secret_key';
 process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
 process.env.RAZORPAY_KEY_SECRET = RAZORPAY_KEY_SECRET;
 
-vi.mock('../src/utils/razorpay', async () => {
-  const actual = await vi.importActual<typeof import('../src/utils/razorpay')>('../src/utils/razorpay');
+vi.mock('../../src/utils/razorpay', async () => {
+  const actual = await vi.importActual<typeof import('../../src/utils/razorpay')>('../../src/utils/razorpay');
   return { ...actual, getRazorpayClient: vi.fn() };
 });
 
-let replset: MongoMemoryReplSet;
-let paymentService: typeof import('../src/services/payment.service');
-let razorpayUtil: typeof import('../src/utils/razorpay');
-let PaymentIntent: typeof import('../src/models/PaymentIntent').PaymentIntent;
-let Order: typeof import('../src/models/Order').Order;
-let Product: typeof import('../src/models/Product').Product;
-let Coupon: typeof import('../src/models/Coupon').Coupon;
+let paymentService: typeof import('../../src/services/payment.service');
+let razorpayUtil: typeof import('../../src/utils/razorpay');
+let PaymentIntent: typeof import('../../src/models/PaymentIntent').PaymentIntent;
+let Order: typeof import('../../src/models/Order').Order;
+let Product: typeof import('../../src/models/Product').Product;
+let Coupon: typeof import('../../src/models/Coupon').Coupon;
+let createCategory: typeof import('../helpers/factories').createCategory;
+let createProductFactory: typeof import('../helpers/factories').createProduct;
+let createCoupon: typeof import('../helpers/factories').createCoupon;
 
 beforeAll(async () => {
-  replset = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
-  await mongoose.connect(replset.getUri(), { dbName: 'razorpay-finalize-test' });
-
-  paymentService = await import('../src/services/payment.service');
-  razorpayUtil = await import('../src/utils/razorpay');
-  ({ PaymentIntent } = await import('../src/models/PaymentIntent'));
-  ({ Order } = await import('../src/models/Order'));
-  ({ Product } = await import('../src/models/Product'));
-  ({ Coupon } = await import('../src/models/Coupon'));
+  await setupTestDb();
+  paymentService = await import('../../src/services/payment.service');
+  razorpayUtil = await import('../../src/utils/razorpay');
+  ({ PaymentIntent } = await import('../../src/models/PaymentIntent'));
+  ({ Order } = await import('../../src/models/Order'));
+  ({ Product } = await import('../../src/models/Product'));
+  ({ Coupon } = await import('../../src/models/Coupon'));
+  ({ createCategory, createProduct: createProductFactory, createCoupon } = await import('../helpers/factories'));
 }, 120_000);
 
 afterAll(async () => {
-  await mongoose.disconnect();
-  await replset.stop();
+  await teardownTestDb();
 });
 
 beforeEach(async () => {
-  await Promise.all([
-    PaymentIntent.deleteMany({}),
-    Order.deleteMany({}),
-    Product.deleteMany({}),
-    Coupon.deleteMany({}),
-  ]);
+  await clearTestDb();
   vi.restoreAllMocks();
 });
 
@@ -89,21 +89,13 @@ function addressFixture() {
   };
 }
 
-async function createProduct(stock: number, name = 'Garden Hose') {
-  return Product.create({
-    name,
-    slug: `${name.toLowerCase().replace(/\s+/g, '-')}-${new Types.ObjectId().toString()}`,
-    shortDescription: 'A hose',
-    description: 'A garden hose',
-    sku: `SKU-${new Types.ObjectId().toString()}`,
-    brand: 'GreenKart',
-    category: new Types.ObjectId(),
-    images: ['hose.jpg'],
-    variants: [],
-    mrp: 120,
-    salePrice: 100,
-    stock,
-  });
+/** Thin wrapper around the shared factory: stock/name are what these tests vary most. */
+async function createStockedProduct(stock: number, name = 'Garden Hose') {
+  // createCategory() defaults to a fixed slug ('planters'); this suite calls
+  // it multiple times per test (and across tests), so give each call a
+  // unique slug to avoid a duplicate-key collision.
+  const category = await createCategory({ slug: `cat-${Date.now()}-${Math.random().toString(36).slice(2)}` });
+  return createProductFactory(category.id, { name, stock, mrp: 120, salePrice: 100 });
 }
 
 function lineFor(product: { _id: Types.ObjectId; name: string }, quantity: number, unitPrice = 100) {
@@ -151,8 +143,8 @@ function expectConfirmed(result: Awaited<ReturnType<typeof paymentService.verify
 describe('payment finalization atomicity (real MongoDB transaction)', () => {
   it('rolls back an earlier successful stock decrement when a later line in the same order is unavailable', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10, 'Garden Hose');
-    const p2 = await createProduct(1, 'Pruning Shears'); // only 1 in stock, order wants 2
+    const p1 = await createStockedProduct(10, 'Garden Hose');
+    const p2 = await createStockedProduct(1, 'Pruning Shears'); // only 1 in stock, order wants 2
 
     const razorpayOrderId = 'order_multi_fail';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2), lineFor(p2, 2)] });
@@ -178,8 +170,8 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('rolls back stock if the coupon reservation fails (usage limit already consumed)', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
-    await Coupon.create({ code: 'MAXED', type: 'FLAT', value: 10, usageLimit: 1, usedCount: 1, isActive: true });
+    const p1 = await createStockedProduct(10);
+    await createCoupon({ code: 'MAXED', type: 'FLAT', value: 10, usageLimit: 1, usedCount: 1, isActive: true });
 
     const razorpayOrderId = 'order_coupon_fail';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'MAXED' });
@@ -201,8 +193,8 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('rolls back stock and coupon reservation if Order creation itself fails', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
-    await Coupon.create({ code: 'SAVE10', type: 'FLAT', value: 10, usageLimit: null, usedCount: 0, isActive: true });
+    const p1 = await createStockedProduct(10);
+    await createCoupon({ code: 'SAVE10', type: 'FLAT', value: 10, usageLimit: null, usedCount: 0, isActive: true });
 
     const razorpayOrderId = 'order_create_fail';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'SAVE10' });
@@ -229,8 +221,8 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('commits stock decrement, coupon increment, and order creation atomically on a captured payment', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
-    await Coupon.create({ code: 'SAVE10', type: 'FLAT', value: 10, usageLimit: 5, usedCount: 0, isActive: true });
+    const p1 = await createStockedProduct(10);
+    await createCoupon({ code: 'SAVE10', type: 'FLAT', value: 10, usageLimit: 5, usedCount: 0, isActive: true });
 
     const razorpayOrderId = 'order_success';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)], couponCode: 'SAVE10' });
@@ -255,7 +247,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('does NOT finalize when the payment is only authorized, not yet captured', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_authorized_only';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_authorized_only';
@@ -277,7 +269,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('rejects when the Razorpay-reported order ID does not match the PaymentIntent', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_mismatch_orderid';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_mismatch_orderid';
@@ -297,7 +289,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('rejects when the Razorpay-reported amount does not match the PaymentIntent', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_mismatch_amount';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_mismatch_amount';
@@ -317,7 +309,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('rejects when the Razorpay-reported currency is not INR', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_mismatch_currency';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_mismatch_currency';
@@ -337,7 +329,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('does not mutate anything again on a duplicate verify call for the same payment', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_dup_verify';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_dup_verify';
@@ -358,7 +350,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('creates exactly one order when the browser never verifies and a payment.captured webhook arrives instead', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_webhook_only';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_webhook_only';
@@ -378,7 +370,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('creates exactly one order when payment.captured and order.paid both fire for the same payment', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_both_events';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_both_events';
@@ -399,7 +391,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('creates exactly one order when verify and a racing webhook both target the same payment', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_race';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_race';
@@ -426,7 +418,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('flags a captured payment as REQUIRES_REFUND (not FAILED) when stock is unavailable at fulfillment time', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(1); // only 1 available, order wants 2
+    const p1 = await createStockedProduct(1); // only 1 available, order wants 2
     const razorpayOrderId = 'order_oos';
     const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
     const paymentId = 'pay_oos';
@@ -458,7 +450,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('rejects a client-supplied order ID substituted for a different real payment (signature is bound to the server-known order ID)', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
 
     const expensiveOrderId = 'order_expensive';
     const cheapOrderId = 'order_cheap';
@@ -486,7 +478,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
   it('ignores an unknown webhook event type safely', async () => {
     const userId = new Types.ObjectId();
-    const p1 = await createProduct(10);
+    const p1 = await createStockedProduct(10);
     const razorpayOrderId = 'order_unknown_event';
     await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
 
@@ -498,10 +490,10 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
     expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('CREATED');
   });
 
-  describe('PROCESSING crash recovery', () => {
+  describe('PROCESSING crash recovery and fencing', () => {
     it('safely recovers a stale PROCESSING intent (crashed worker) and finalizes exactly once', async () => {
       const userId = new Types.ObjectId();
-      const p1 = await createProduct(10);
+      const p1 = await createStockedProduct(10);
       const razorpayOrderId = 'order_stale_recover';
       const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
       const paymentId = 'pay_stale_recover';
@@ -532,7 +524,7 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
 
     it('does not let a fresh (non-stale) PROCESSING intent be reclaimed or reprocessed', async () => {
       const userId = new Types.ObjectId();
-      const p1 = await createProduct(10);
+      const p1 = await createStockedProduct(10);
       const razorpayOrderId = 'order_fresh_processing';
       const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
       const paymentId = 'pay_fresh_processing';
@@ -557,6 +549,74 @@ describe('payment finalization atomicity (real MongoDB transaction)', () => {
       expect(await Order.countDocuments({})).toBe(0);
       expect((await Product.findById(p1._id))!.stock).toBe(10);
       expect((await PaymentIntent.findOne({ razorpayOrderId }))!.status).toBe('PROCESSING');
+    });
+
+    it('a stale-fenced fulfilment-failure write cannot clobber a PaymentIntent another worker already finalized to PAID', async () => {
+      // Regression test for the "zombie worker resumes after being
+      // reclaimed" race: a worker that claimed the intent long ago (and is
+      // now presumed crashed) must never be able to overwrite the outcome
+      // of whichever worker actually reclaimed and finalized it, even if it
+      // wakes up afterward and tries to record its own (stale) failure.
+      const userId = new Types.ObjectId();
+      const p1 = await createStockedProduct(10);
+      const razorpayOrderId = 'order_zombie_fenced';
+      const intent = await createIntent({ userId, razorpayOrderId, lines: [lineFor(p1, 2)] });
+
+      const zombieClaimToken = new Date(Date.now() - 10 * 60 * 1000);
+      await PaymentIntent.updateOne(
+        { _id: intent._id },
+        { $set: { status: 'PROCESSING', processingStartedAt: zombieClaimToken, razorpayPaymentId: 'pay_zombie' } }
+      );
+
+      // Meanwhile, a legitimate reclaim + successful finalize happens with a
+      // fresh token.
+      const winningOrder = await Order.create({
+        orderNumber: 'GLZOMBIETEST',
+        user: userId,
+        items: [
+          {
+            product: p1._id,
+            productName: p1.name,
+            productImage: 'hose.jpg',
+            sku: p1.sku,
+            variant: null,
+            quantity: 2,
+            unitPrice: 100,
+            totalPrice: 200,
+          },
+        ],
+        shippingAddress: addressFixture(),
+        subtotal: 200,
+        discount: 0,
+        shipping: 0,
+        tax: 0,
+        grandTotal: 200,
+        couponCode: null,
+        paymentMethod: 'ONLINE',
+        paymentStatus: 'PAID',
+        razorpayOrderId,
+        razorpayPaymentId: 'pay_winner',
+        orderStatus: 'CONFIRMED',
+        statusHistory: [{ status: 'CONFIRMED', changedAt: new Date() }],
+      });
+      await PaymentIntent.updateOne(
+        { _id: intent._id },
+        { $set: { status: 'PAID', order: winningOrder._id, processingStartedAt: new Date() } }
+      );
+
+      // The "zombie" now attempts its own fenced failure-path write, using
+      // the exact same filter shape finalizePaymentIntent's catch block
+      // uses: _id + its own (stale) processingStartedAt + status PROCESSING.
+      const zombieWrite = await PaymentIntent.updateOne(
+        { _id: intent._id, processingStartedAt: zombieClaimToken, status: 'PROCESSING' },
+        { $set: { status: 'REQUIRES_REFUND', failureReason: 'zombie: insufficient stock' } }
+      );
+
+      expect(zombieWrite.matchedCount).toBe(0); // the stale write must not apply
+
+      const after = await PaymentIntent.findOne({ razorpayOrderId });
+      expect(after!.status).toBe('PAID'); // untouched by the zombie
+      expect(after!.order?.toString()).toBe(winningOrder._id.toString());
     });
   });
 });
