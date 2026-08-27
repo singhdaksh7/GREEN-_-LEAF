@@ -18,7 +18,7 @@ export const getDashboardStats = asyncHandler(async (_req: Request, res: Respons
       Product.countDocuments(),
       Product.find({ stock: { $lte: 10 }, isActive: true }).select('name slug stock').limit(10),
       Order.countDocuments({ orderStatus: 'PENDING' }),
-      Order.find().sort({ createdAt: -1 }).limit(10).populate('user', 'firstName lastName email'),
+      Order.find().sort({ createdAt: -1 }).limit(10).populate('user', 'name email'),
       BulkOrderInquiry.countDocuments({ status: 'NEW' }),
     ]);
 

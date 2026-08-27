@@ -10,9 +10,7 @@ export function ProfilePage() {
   const user = useAuthStore((s) => s.user);
   const setAuth = useAuthStore((s) => s.setAuth);
   const accessToken = useAuthStore((s) => s.accessToken);
-  const [firstName, setFirstName] = useState(user?.firstName ?? '');
-  const [lastName, setLastName] = useState(user?.lastName ?? '');
-  const [phone, setPhone] = useState(user?.phone ?? '');
+  const [name, setName] = useState(user?.name ?? '');
 
   const mutation = useMutation({
     mutationFn: updateProfileRequest,
@@ -29,16 +27,12 @@ export function ProfilePage() {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          mutation.mutate({ firstName, lastName, phone });
+          mutation.mutate({ name });
         }}
         className="flex flex-col gap-4"
       >
-        <div className="grid grid-cols-2 gap-3">
-          <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="First Name" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          <input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last Name" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-        </div>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full Name" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
         <input value={user?.email ?? ''} disabled className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500" />
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone" className="rounded-lg border border-gray-300 px-3 py-2 text-sm" />
         <Button type="submit" isLoading={mutation.isPending} className="self-start">
           Save Changes
         </Button>

@@ -29,10 +29,8 @@ function setAuthCookies(res: Response, accessToken: string, refreshToken: string
 function serializeUser(user: IUser) {
   return {
     id: user._id?.toString(),
-    firstName: user.firstName,
-    lastName: user.lastName,
+    name: user.name,
     email: user.email,
-    phone: user.phone,
     role: user.role,
   };
 }

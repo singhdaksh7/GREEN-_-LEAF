@@ -19,6 +19,11 @@ export const useAuthStore = create<AuthState>()(
       setAccessToken: (accessToken) => set({ accessToken }),
       logout: () => set({ user: null, accessToken: null }),
     }),
-    { name: 'green-leaf-auth' }
+    {
+      name: 'green-leaf-auth',
+      version: 1,
+      partialize: (state) => ({ user: state.user }),
+      migrate: (persistedState) => ({ user: (persistedState as Partial<AuthState>)?.user ?? null }),
+    }
   )
 );

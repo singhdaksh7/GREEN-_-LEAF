@@ -2,10 +2,8 @@ import { z } from 'zod';
 
 export const updateProfileSchema = z.object({
   body: z.object({
-    firstName: z.string().min(1),
-    lastName: z.string().min(1),
-    phone: z.string().min(10),
-  }),
+    name: z.string().trim().min(1).max(100),
+  }).strict(),
 });
 
 export const addressSchema = z.object({

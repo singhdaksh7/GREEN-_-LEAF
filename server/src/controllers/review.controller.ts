@@ -11,7 +11,7 @@ export const listReviews = asyncHandler(async (req: Request, res: Response) => {
 
   const filter = { product: productId, isApproved: true };
   const [reviews, total] = await Promise.all([
-    Review.find(filter).sort({ createdAt: -1 }).skip((p - 1) * l).limit(l).populate('user', 'firstName lastName'),
+    Review.find(filter).sort({ createdAt: -1 }).skip((p - 1) * l).limit(l).populate('user', 'name'),
     Review.countDocuments(filter),
   ]);
 

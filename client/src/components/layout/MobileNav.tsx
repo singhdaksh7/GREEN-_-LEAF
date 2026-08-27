@@ -40,7 +40,7 @@ export function MobileNav() {
 
         <div className="flex flex-col gap-0.5 border-b border-gray-100 px-3 pb-3">
           <Link to={user ? '/account' : '/login'} onClick={() => toggle(false)} className="flex items-center gap-3 rounded-lg px-2 py-3 text-sm font-medium text-gray-700 active:bg-gray-50">
-            <User size={18} /> {user ? `Hi, ${user.firstName}` : 'Login / Register'}
+            <User size={18} /> {user ? `Hi, ${user.name}` : 'Login / Register'}
           </Link>
           <Link to="/account/wishlist" onClick={() => toggle(false)} className="flex items-center gap-3 rounded-lg px-2 py-3 text-sm text-gray-700 active:bg-gray-50">
             <Heart size={18} /> Wishlist

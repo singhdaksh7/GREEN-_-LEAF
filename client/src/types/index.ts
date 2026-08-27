@@ -84,10 +84,8 @@ export interface PricedCart {
 
 export interface User {
   id: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   email: string;
-  phone: string;
   role: 'CUSTOMER' | 'ADMIN' | 'SUPER_ADMIN';
 }
 
@@ -123,7 +121,7 @@ export interface OrderItem {
 export interface Order {
   _id: string;
   orderNumber: string;
-  user?: string | { _id: string; firstName: string; lastName: string; email: string };
+  user?: string | { _id: string; name: string; email: string };
   items: OrderItem[];
   shippingAddress: {
     fullName: string; phone: string; email: string; addressLine: string;
@@ -145,7 +143,7 @@ export interface Order {
 export interface Review {
   _id: string;
   product: string;
-  user: { _id: string; firstName: string; lastName: string } | string;
+  user: { _id: string; name: string } | string;
   rating: number;
   title: string;
   description: string;

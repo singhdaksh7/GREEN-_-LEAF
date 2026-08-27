@@ -7,7 +7,7 @@ export interface AuthResponse {
 }
 
 export async function registerRequest(payload: {
-  firstName: string; lastName: string; email: string; phone: string; password: string; confirmPassword: string;
+  name: string; email: string; password: string;
 }): Promise<AuthResponse> {
   const res = await api.post<ApiSuccess<AuthResponse>>('/auth/register', payload);
   return res.data.data;

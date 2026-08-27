@@ -13,7 +13,7 @@ export const listAdminOrders = asyncHandler(async (req: Request, res: Response) 
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
 
   const [orders, total] = await Promise.all([
-    Order.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate('user', 'firstName lastName email'),
+    Order.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate('user', 'name email'),
     Order.countDocuments(filter),
   ]);
 
@@ -21,7 +21,7 @@ export const listAdminOrders = asyncHandler(async (req: Request, res: Response) 
 });
 
 export const getAdminOrder = asyncHandler(async (req: Request, res: Response) => {
-  const order = await Order.findById(req.params.id).populate('user', 'firstName lastName email phone');
+  const order = await Order.findById(req.params.id).populate('user', 'name email');
   if (!order) throw ApiError.notFound('Order not found');
   sendSuccess(res, order, 'Order retrieved successfully');
 });

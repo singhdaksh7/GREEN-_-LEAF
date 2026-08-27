@@ -88,7 +88,7 @@ export function Header() {
           <HeaderIconLink
             to={user ? '/account' : '/login'}
             icon={<User size={20} />}
-            label={user ? user.firstName : 'Login'}
+            label={user ? user.name : 'Login'}
             ariaLabel="Account"
           />
           <HeaderIconLink to="/account/wishlist" icon={<Heart size={20} />} label="Wishlist" count={productIds.length} ariaLabel="Wishlist" />

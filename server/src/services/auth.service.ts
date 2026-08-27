@@ -6,15 +6,18 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/
 import { env } from '../config/env';
 
 interface RegisterInput {
-  firstName: string;
-  lastName: string;
+  name: string;
   email: string;
-  phone: string;
   password: string;
 }
 
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 export async function registerUser(input: RegisterInput): Promise<IUser> {
-  const existing = await User.findOne({ email: input.email.toLowerCase() });
+  const email = normalizeEmail(input.email);
+  const existing = await User.findOne({ email });
   if (existing) {
     throw ApiError.conflict('An account with this email already exists');
   }
@@ -22,10 +25,8 @@ export async function registerUser(input: RegisterInput): Promise<IUser> {
   const passwordHash = await bcrypt.hash(input.password, 12);
 
   const user = await User.create({
-    firstName: input.firstName,
-    lastName: input.lastName,
-    email: input.email.toLowerCase(),
-    phone: input.phone,
+    name: input.name.trim(),
+    email,
     passwordHash,
     role: 'CUSTOMER',
   });
@@ -34,7 +35,7 @@ export async function registerUser(input: RegisterInput): Promise<IUser> {
 }
 
 export async function loginUser(email: string, password: string): Promise<IUser> {
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+passwordHash');
+  const user = await User.findOne({ email: normalizeEmail(email) }).select('+passwordHash');
   if (!user || !user.isActive) {
     throw ApiError.unauthorized('Invalid email or password');
   }
@@ -97,7 +98,7 @@ interface ResetTokenPayload {
  * service later without changing the request/response contract.
  */
 export async function requestPasswordReset(email: string): Promise<void> {
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const user = await User.findOne({ email: normalizeEmail(email) });
   if (!user) return; // Do not reveal whether the account exists.
 
   const resetToken = jwt.sign(

@@ -1,7 +1,7 @@
 import { api } from './axios';
 import { ApiSuccess, Address, User } from '@/types';
 
-export async function updateProfileRequest(payload: { firstName: string; lastName: string; phone: string }): Promise<User> {
+export async function updateProfileRequest(payload: { name: string }): Promise<User> {
   const res = await api.patch<ApiSuccess<User>>('/account/profile', payload);
   return res.data.data;
 }

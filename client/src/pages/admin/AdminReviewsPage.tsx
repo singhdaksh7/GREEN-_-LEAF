@@ -6,7 +6,7 @@ import { StarRating } from '@/components/ui/StarRating';
 interface AdminReview {
   _id: string;
   product: { name: string };
-  user: { firstName: string; lastName: string };
+  user: { name: string };
   rating: number;
   title: string;
   description: string;
@@ -42,7 +42,7 @@ export function AdminReviewsPage() {
             <p className="mt-1 text-sm text-gray-600">{review.description}</p>
             <div className="mt-2 flex items-center justify-between">
               <span className="text-xs text-gray-400">
-                {review.user?.firstName} {review.user?.lastName} · {review.isApproved ? 'Approved' : 'Hidden'}
+                {review.user?.name} · {review.isApproved ? 'Approved' : 'Hidden'}
               </span>
               <button
                 onClick={() => approvalMutation.mutate({ id: review._id, isApproved: !review.isApproved })}

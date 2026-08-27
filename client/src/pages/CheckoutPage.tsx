@@ -45,7 +45,7 @@ export function CheckoutPage() {
     formState: { errors },
   } = useForm<AddressForm>({
     resolver: zodResolver(addressSchema),
-    defaultValues: { fullName: user ? `${user.firstName} ${user.lastName}` : '', email: user?.email ?? '', phone: user?.phone ?? '' },
+    defaultValues: { fullName: user?.name ?? '', email: user?.email ?? '', phone: '' },
   });
 
   const couponMutation = useMutation({

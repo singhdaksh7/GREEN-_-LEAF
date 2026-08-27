@@ -42,7 +42,7 @@ export function useLogin() {
       await mergeGuestState();
       queryClient.invalidateQueries({ queryKey: ['cart'] });
       queryClient.invalidateQueries({ queryKey: ['wishlist'] });
-      toast.success(`Welcome back, ${user.firstName}!`);
+      toast.success(`Welcome back, ${user.name}!`);
     },
     onError: (error) => toast.error(getErrorMessage(error, 'Login failed')),
   });

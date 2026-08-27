@@ -8,10 +8,8 @@ import { signAccessToken } from '../../src/utils/jwt';
 export async function createUser(overrides: Partial<{ role: 'CUSTOMER' | 'ADMIN' | 'SUPER_ADMIN'; email: string }> = {}): Promise<IUser> {
   const passwordHash = await bcrypt.hash('Password@123', 4);
   return User.create({
-    firstName: 'Test',
-    lastName: 'User',
+    name: 'Test User',
     email: overrides.email ?? `user-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
-    phone: '9876543210',
     passwordHash,
     role: overrides.role ?? 'CUSTOMER',
   });

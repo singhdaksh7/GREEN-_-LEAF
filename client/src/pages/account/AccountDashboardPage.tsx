@@ -12,7 +12,7 @@ export function AccountDashboardPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="rounded-xl border border-gray-100 p-5">
-        <h2 className="text-base font-semibold text-gray-900">Hi, {user?.firstName} 👋</h2>
+        <h2 className="text-base font-semibold text-gray-900">Hi, {user?.name} 👋</h2>
         <p className="mt-1 text-sm text-gray-500">Welcome back to your GreenKart account.</p>
       </div>
 

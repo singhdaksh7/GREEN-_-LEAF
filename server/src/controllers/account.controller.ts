@@ -6,14 +6,14 @@ import { User } from '../models/User';
 import { Address } from '../models/Address';
 
 export const updateProfile = asyncHandler(async (req: Request, res: Response) => {
-  const { firstName, lastName, phone } = req.body;
+  const { name } = req.body;
   const user = await User.findByIdAndUpdate(
     req.user!.id,
-    { $set: { firstName, lastName, phone } },
+    { $set: { name } },
     { new: true, runValidators: true }
   );
   if (!user) throw ApiError.notFound('User not found');
-  sendSuccess(res, user, 'Profile updated successfully');
+  sendSuccess(res, { id: user.id, name: user.name, email: user.email, role: user.role }, 'Profile updated successfully');
 });
 
 export const listAddresses = asyncHandler(async (req: Request, res: Response) => {

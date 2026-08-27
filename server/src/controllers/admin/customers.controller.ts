@@ -13,8 +13,7 @@ export const listCustomers = asyncHandler(async (req: Request, res: Response) =>
   if (req.query.q) {
     const regex = buildSafeContainsRegex(String(req.query.q));
     filter.$or = [
-      { firstName: regex },
-      { lastName: regex },
+      { name: regex },
       { email: regex },
     ];
   }

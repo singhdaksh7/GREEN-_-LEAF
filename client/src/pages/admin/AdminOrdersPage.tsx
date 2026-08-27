@@ -38,7 +38,7 @@ export function AdminOrdersPage() {
               <tr key={order._id} className="border-b border-gray-50">
                 <td className="p-3 font-medium text-gray-800">#{order.orderNumber}</td>
                 <td className="p-3 text-gray-500">
-                  {typeof order.user === 'object' ? `${(order.user as unknown as { firstName: string }).firstName}` : ''}
+                  {typeof order.user === 'object' ? `${(order.user as unknown as { name: string }).name}` : ''}
                 </td>
                 <td className="p-3 text-gray-500">{formatDate(order.createdAt)}</td>
                 <td className="p-3"><Badge variant="gray">{order.orderStatus}</Badge></td>

@@ -26,7 +26,6 @@ export function AdminCustomersPage() {
             <tr className="border-b border-gray-100 text-left text-xs uppercase text-gray-400">
               <th className="p-3">Name</th>
               <th className="p-3">Email</th>
-              <th className="p-3">Phone</th>
               <th className="p-3">Status</th>
               <th className="p-3" />
             </tr>
@@ -34,9 +33,8 @@ export function AdminCustomersPage() {
           <tbody>
             {data?.customers.map((c) => (
               <tr key={c.id} className="border-b border-gray-50">
-                <td className="p-3">{c.firstName} {c.lastName}</td>
+                <td className="p-3">{c.name}</td>
                 <td className="p-3 text-gray-500">{c.email}</td>
-                <td className="p-3 text-gray-500">{c.phone}</td>
                 <td className="p-3">{(c as unknown as { isActive: boolean }).isActive ? 'Active' : 'Disabled'}</td>
                 <td className="p-3">
                   <button

@@ -40,7 +40,7 @@ export const getProduct = asyncHandler(async (req: Request, res: Response) => {
 
   const [related, reviews] = await Promise.all([
     getRelatedProducts(product),
-    Review.find({ product: product._id, isApproved: true }).sort({ createdAt: -1 }).limit(10).populate('user', 'firstName lastName'),
+    Review.find({ product: product._id, isApproved: true }).sort({ createdAt: -1 }).limit(10).populate('user', 'name'),
   ]);
 
   sendSuccess(res, { product, related, reviews }, 'Product retrieved successfully');

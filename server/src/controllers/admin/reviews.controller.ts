@@ -12,7 +12,7 @@ export const listAdminReviews = asyncHandler(async (req: Request, res: Response)
   if (req.query.isApproved !== undefined) filter.isApproved = req.query.isApproved === 'true';
 
   const [reviews, total] = await Promise.all([
-    Review.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate('product', 'name slug').populate('user', 'firstName lastName'),
+    Review.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).populate('product', 'name slug').populate('user', 'name'),
     Review.countDocuments(filter),
   ]);
 

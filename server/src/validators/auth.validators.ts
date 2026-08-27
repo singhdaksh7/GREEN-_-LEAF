@@ -2,21 +2,15 @@ import { z } from 'zod';
 
 export const registerSchema = z.object({
   body: z.object({
-    firstName: z.string().min(1, 'First name is required'),
-    lastName: z.string().min(1, 'Last name is required'),
-    email: z.string().email('Invalid email'),
-    phone: z.string().min(10, 'Phone must be at least 10 digits').max(15),
+    name: z.string().trim().min(1, 'Full name is required').max(100),
+    email: z.string().trim().email('Invalid email'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
-    confirmPassword: z.string().min(8),
-  }).refine((data) => data.password === data.confirmPassword, {
-    message: 'Passwords do not match',
-    path: ['confirmPassword'],
-  }),
+  }).strict(),
 });
 
 export const loginSchema = z.object({
   body: z.object({
-    email: z.string().email('Invalid email'),
+    email: z.string().trim().email('Invalid email'),
     password: z.string().min(1, 'Password is required'),
   }),
 });

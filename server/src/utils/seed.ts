@@ -242,10 +242,8 @@ async function seedAdmin() {
 
   const passwordHash = await bcrypt.hash('Admin@12345', 12);
   return User.create({
-    firstName: 'Green',
-    lastName: 'Admin',
+    name: 'Green Admin',
     email: 'admin@greenleaf.example',
-    phone: '9999999999',
     passwordHash,
     role: 'SUPER_ADMIN',
   });
@@ -257,10 +255,8 @@ async function seedDemoCustomer() {
 
   const passwordHash = await bcrypt.hash('Customer@12345', 12);
   return User.create({
-    firstName: 'Asha',
-    lastName: 'Rao',
+    name: 'Asha Rao',
     email: 'customer@greenleaf.example',
-    phone: '9876543210',
     passwordHash,
     role: 'CUSTOMER',
   });
