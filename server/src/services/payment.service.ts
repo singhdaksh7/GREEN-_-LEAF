@@ -5,7 +5,7 @@ import { Product } from '../models/Product';
 import { Coupon } from '../models/Coupon';
 import { ApiError } from '../utils/ApiError';
 import { env } from '../config/env';
-import { getRazorpayClient, toPaise, timingSafeEqualHex, computeHmacSha256Hex } from '../utils/razorpay';
+import { getRazorpayClient, isRazorpayConfigured, toPaise, timingSafeEqualHex, computeHmacSha256Hex } from '../utils/razorpay';
 import * as cartService from './cart.service';
 import { applyCoupon, validateCouponEligibility } from './pricing.service';
 import { ShippingAddressInput } from './order.service';
@@ -41,6 +41,10 @@ export async function createRazorpayOrder(
   shippingAddress: ShippingAddressInput,
   couponCode: string | null
 ): Promise<RazorpayOrderInitData> {
+  // Check configuration before reading the cart or invoking the Razorpay SDK.
+  // This makes the disabled mode an intentional, safe deployment state.
+  if (!isRazorpayConfigured()) throw ApiError.serviceUnavailable('Online payments are not available yet');
+
   const cart = await cartService.getOrCreateCart(userId);
   if (cart.items.length === 0) throw ApiError.badRequest('Your cart is empty');
 
@@ -380,7 +384,7 @@ export interface VerifyPaymentInput {
 export type VerifyPaymentResult = { status: 'CONFIRMED'; order: IOrder } | { status: 'PENDING' };
 
 export async function verifyAndFinalizePayment(userId: string, input: VerifyPaymentInput): Promise<VerifyPaymentResult> {
-  if (!env.razorpayKeySecret) throw ApiError.internal('Razorpay is not configured on this server');
+  if (!isRazorpayConfigured()) throw ApiError.serviceUnavailable('Online payments are not available yet');
 
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = input;
 

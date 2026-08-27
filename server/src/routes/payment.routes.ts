@@ -6,6 +6,7 @@ import { createRazorpayOrderSchema, verifyRazorpayPaymentSchema } from '../valid
 
 const router = Router();
 
+router.get('/razorpay/config', paymentController.razorpayConfigHandler);
 router.use(authenticate);
 router.post('/razorpay/create-order', validate(createRazorpayOrderSchema), paymentController.createRazorpayOrderHandler);
 router.post('/razorpay/verify', validate(verifyRazorpayPaymentSchema), paymentController.verifyRazorpayPaymentHandler);

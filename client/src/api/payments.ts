@@ -10,6 +10,15 @@ export interface RazorpayOrderInitData {
   name: string;
 }
 
+export interface RazorpayConfig {
+  enabled: boolean;
+}
+
+export async function fetchRazorpayConfig(): Promise<RazorpayConfig> {
+  const res = await api.get<ApiSuccess<RazorpayConfig>>('/payments/razorpay/config');
+  return res.data.data;
+}
+
 export async function createRazorpayOrderRequest(payload: {
   shippingAddress: ShippingAddressInput;
   couponCode: string | null;

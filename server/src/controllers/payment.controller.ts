@@ -2,8 +2,15 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { sendCreated, sendSuccess } from '../utils/ApiResponse';
 import { env } from '../config/env';
-import { timingSafeEqualHex, computeHmacSha256Hex } from '../utils/razorpay';
+import { timingSafeEqualHex, computeHmacSha256Hex, isRazorpayConfigured } from '../utils/razorpay';
 import * as paymentService from '../services/payment.service';
+
+// This endpoint deliberately exposes only an enablement flag. It lets the
+// checkout adapt when credentials are added in Render later without leaking
+// keys or requiring a frontend deployment/configuration change.
+export const razorpayConfigHandler = (_req: Request, res: Response) => {
+  sendSuccess(res, { enabled: isRazorpayConfigured() });
+};
 
 export const createRazorpayOrderHandler = asyncHandler(async (req: Request, res: Response) => {
   const { shippingAddress, couponCode } = req.body;

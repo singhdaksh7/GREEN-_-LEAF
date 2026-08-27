@@ -33,11 +33,16 @@ describe('razorpay utils', () => {
     expect(isRazorpayConfigured()).toBe(true);
   });
 
-  it('throws a clear error when creating a client without configuration', async () => {
+  it('throws a controlled unavailable error when creating a client without configuration', async () => {
     delete process.env.RAZORPAY_KEY_ID;
     delete process.env.RAZORPAY_KEY_SECRET;
     const { getRazorpayClient } = await import('../src/utils/razorpay');
-    expect(() => getRazorpayClient()).toThrow(/not configured/i);
+    expect(() => getRazorpayClient()).toThrow(/Online payments are not available yet/i);
+    try {
+      getRazorpayClient();
+    } catch (error) {
+      expect(error).toMatchObject({ statusCode: 503 });
+    }
   });
 
   it('computes a matching HMAC-SHA256 hex digest for identical input', async () => {

@@ -74,15 +74,24 @@ vi.mock('../src/services/cart.service', () => ({
 
 vi.mock('../src/utils/razorpay', async () => {
   const actual = await vi.importActual<typeof import('../src/utils/razorpay')>('../src/utils/razorpay');
-  return { ...actual, getRazorpayClient: vi.fn() };
+  return {
+    ...actual,
+    getRazorpayClient: vi.fn(),
+    isRazorpayConfigured: vi.fn(() => Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET)),
+  };
 });
 
 const USER_ID = 'user_1';
 
-async function loadService() {
+async function loadService(configured = true) {
   vi.resetModules();
-  process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
-  process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+  if (configured) {
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
+    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+  } else {
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+  }
   const razorpayUtil = await import('../src/utils/razorpay');
   const service = await import('../src/services/payment.service');
   return { service, razorpayUtil };
@@ -125,12 +134,14 @@ describe('payment.service.createRazorpayOrder', () => {
   });
 
   it('throws when Razorpay is not configured', async () => {
-    const { service, razorpayUtil } = await loadService();
-    vi.mocked(razorpayUtil.getRazorpayClient).mockImplementation(() => {
-      throw new Error('Razorpay is not configured on this server');
-    });
+    const { service } = await loadService(false);
+    const cartService = await import('../src/services/cart.service');
 
-    await expect(service.createRazorpayOrder(USER_ID, addressFixture(), null)).rejects.toThrow(/not configured/i);
+    await expect(service.createRazorpayOrder(USER_ID, addressFixture(), null)).rejects.toMatchObject({
+      statusCode: 503,
+      message: 'Online payments are not available yet',
+    });
+    expect(cartService.getOrCreateCart).not.toHaveBeenCalled();
   });
 
   it('rejects when the cart is empty', async () => {

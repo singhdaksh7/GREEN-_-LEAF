@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Seo } from '@/components/seo/Seo';
 import { formatInr } from '@/utils/format';
 import { placeOrderRequest } from '@/api/orders';
-import { createRazorpayOrderRequest, verifyRazorpayPaymentRequest } from '@/api/payments';
+import { createRazorpayOrderRequest, fetchRazorpayConfig, verifyRazorpayPaymentRequest } from '@/api/payments';
 import { validateCouponRequest, CouponValidation } from '@/api/coupons';
 import { fetchAddresses } from '@/api/account';
 import { getErrorMessage } from '@/api/axios';
@@ -41,6 +41,12 @@ export function CheckoutPage() {
   const [isPayingOnline, setIsPayingOnline] = useState(false);
 
   const { data: addresses = [] } = useQuery({ queryKey: ['addresses'], queryFn: fetchAddresses });
+  const { data: razorpayConfig } = useQuery({
+    queryKey: ['razorpay-config'],
+    queryFn: fetchRazorpayConfig,
+    staleTime: Infinity,
+  });
+  const razorpayEnabled = razorpayConfig?.enabled === true;
 
   const {
     register,
@@ -90,6 +96,10 @@ export function CheckoutPage() {
   const grandTotal = Math.max(0, cart.subtotal - discount + shipping);
 
   async function payOnline(values: AddressForm) {
+    if (!razorpayEnabled) {
+      toast.error('Online payments are not available yet');
+      return;
+    }
     if (isPayingOnline) return;
     setIsPayingOnline(true);
 
@@ -270,9 +280,14 @@ export function CheckoutPage() {
                 <input type="radio" checked={paymentMethod === 'COD'} onChange={() => setPaymentMethod('COD')} />
                 Cash on Delivery
               </label>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="radio" checked={paymentMethod === 'ONLINE'} onChange={() => setPaymentMethod('ONLINE')} />
-                Pay Online
+              <label className={`flex items-center gap-2 text-sm ${razorpayEnabled ? 'text-gray-700' : 'cursor-not-allowed text-gray-400'}`}>
+                <input
+                  type="radio"
+                  checked={paymentMethod === 'ONLINE'}
+                  disabled={!razorpayEnabled}
+                  onChange={() => setPaymentMethod('ONLINE')}
+                />
+                {razorpayEnabled ? 'Pay Online' : 'Pay Online — Coming Soon'}
               </label>
             </div>
           </div>

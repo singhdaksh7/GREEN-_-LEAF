@@ -11,7 +11,7 @@ export function isRazorpayConfigured(): boolean {
 
 export function getRazorpayClient(): Razorpay {
   if (!isRazorpayConfigured()) {
-    throw ApiError.internal('Razorpay is not configured on this server');
+    throw ApiError.serviceUnavailable('Online payments are not available yet');
   }
   if (!client) {
     client = new Razorpay({ key_id: env.razorpayKeyId, key_secret: env.razorpayKeySecret });
