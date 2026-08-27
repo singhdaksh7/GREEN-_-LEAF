@@ -15,7 +15,7 @@ export function HomePage() {
         jsonLd={{
           '@context': 'https://schema.org',
           '@type': 'Organization',
-          name: 'Green Leaf',
+          name: 'GreenKart',
           url: 'https://greenleaf.example',
         }}
       />

@@ -25,7 +25,10 @@ export function MobileNav() {
       <div className="absolute inset-0 bg-black/50" onClick={() => toggle(false)} />
       <div className="absolute inset-y-0 left-0 flex w-[85%] max-w-sm flex-col overflow-y-auto bg-white">
         <div className="flex items-center justify-between border-b border-gray-100 p-4">
-          <span className="font-display text-lg font-semibold text-brand-700">Green Leaf</span>
+          <span className="flex items-center gap-1.5">
+            <img src="/brand/greenkart-icon.webp" alt="" className="h-6 w-6 object-contain" />
+            <span className="font-display text-lg font-semibold text-brand-700">GreenKart</span>
+          </span>
           <button onClick={() => toggle(false)} aria-label="Close menu">
             <X size={22} />
           </button>

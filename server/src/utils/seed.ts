@@ -352,7 +352,7 @@ async function seedProducts(subcategoryBySlug: Map<string, mongoose.Types.Object
         description: `${seed.name} is carefully selected for Indian gardening conditions. Ideal for both home gardens and balcony gardening, this product helps you grow a thriving, sustainable garden all year round.`,
         howToUse: 'Follow the recommended dosage/usage instructions on the packaging. For best results, use consistently as part of your regular gardening routine.',
         sku,
-        brand: 'Green Leaf',
+        brand: 'GreenKart',
         category,
         subcategory,
         images,

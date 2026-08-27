@@ -9,7 +9,7 @@ interface SeoProps {
 export function Seo({ title, description, jsonLd }: SeoProps) {
   return (
     <Helmet>
-      <title>{title} | Green Leaf</title>
+      <title>{title} | GreenKart</title>
       {description && <meta name="description" content={description} />}
       <meta property="og:title" content={title} />
       {description && <meta property="og:description" content={description} />}

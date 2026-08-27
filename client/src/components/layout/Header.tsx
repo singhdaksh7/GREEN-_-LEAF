@@ -65,8 +65,8 @@ export function Header() {
         </button>
 
         <Link to="/" className="mr-1 flex shrink-0 items-center gap-1.5 sm:mr-2">
-          <img src="/leaf.svg" alt="" className="h-7 w-7 sm:h-8 sm:w-8" />
-          <span className="font-display text-lg font-bold text-brand-700 sm:text-xl">Green Leaf</span>
+          <img src="/brand/greenkart-icon.webp" alt="" className="h-7 w-7 object-contain sm:h-8 sm:w-8" />
+          <span className="font-display text-lg font-bold text-brand-700 sm:text-xl">GreenKart</span>
         </Link>
 
         <div className="hidden flex-1 md:block">

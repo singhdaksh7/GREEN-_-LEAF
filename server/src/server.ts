@@ -8,7 +8,7 @@ async function bootstrap(): Promise<void> {
   const app = createApp();
   app.listen(env.port, '0.0.0.0', () => {
     // eslint-disable-next-line no-console
-    console.log(`[server] Green Leaf API listening on port ${env.port} (${env.nodeEnv})`);
+    console.log(`[server] GreenKart API listening on port ${env.port} (${env.nodeEnv})`);
   });
 }
 

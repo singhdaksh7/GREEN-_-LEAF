@@ -57,7 +57,7 @@ const productSchema = new Schema<IProduct>(
     description: { type: String, required: true },
     howToUse: { type: String },
     sku: { type: String, required: true, unique: true },
-    brand: { type: String, default: 'Green Leaf' },
+    brand: { type: String, default: 'GreenKart' },
     category: { type: Schema.Types.ObjectId, ref: 'Category', required: true, index: true },
     subcategory: { type: Schema.Types.ObjectId, ref: 'Category', default: null, index: true },
     images: [{ type: String }],

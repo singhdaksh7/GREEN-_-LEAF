@@ -26,8 +26,9 @@ export function AdminLayout() {
   return (
     <div className="flex min-h-screen bg-gray-50">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-gray-100 bg-white lg:flex">
-        <div className="border-b border-gray-100 p-4">
-          <span className="font-display text-lg font-bold text-brand-700">Green Leaf Admin</span>
+        <div className="flex items-center gap-2 border-b border-gray-100 p-4">
+          <img src="/brand/greenkart-icon.webp" alt="" className="h-7 w-7 object-contain" />
+          <span className="font-display text-lg font-bold text-brand-700">GreenKart Admin</span>
         </div>
         <nav className="flex-1 space-y-1 p-3">
           {NAV_ITEMS.map((item) => (

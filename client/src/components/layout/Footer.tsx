@@ -30,7 +30,10 @@ export function Footer() {
     <footer className="mt-16 border-t border-gray-100 bg-brand-900 text-brand-100">
       <div className="container-app grid grid-cols-2 gap-8 py-12 sm:grid-cols-2 lg:grid-cols-5">
         <div className="col-span-2 sm:col-span-2 lg:col-span-1">
-          <span className="font-display text-xl font-bold text-white">Green Leaf</span>
+          <span className="flex items-center gap-2">
+            <img src="/brand/greenkart-icon.webp" alt="" className="h-7 w-7 object-contain" />
+            <span className="font-display text-xl font-bold text-white">GreenKart</span>
+          </span>
           <p className="mt-3 text-sm text-brand-200">
             Premium gardening essentials delivered across India. Grow your green space with confidence.
           </p>
@@ -109,7 +112,7 @@ export function Footer() {
 
       <div className="border-t border-brand-800">
         <div className="container-app flex flex-col items-center justify-between gap-3 py-4 text-xs text-brand-300 sm:flex-row">
-          <p>© {new Date().getFullYear()} Green Leaf. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} GreenKart. All rights reserved.</p>
           <div className="flex items-center gap-2">
             {['COD', 'UPI', 'Cards', 'Net Banking'].map((method) => (
               <span key={method} className="rounded border border-brand-700 px-2 py-1 text-[10px] font-medium text-brand-200">

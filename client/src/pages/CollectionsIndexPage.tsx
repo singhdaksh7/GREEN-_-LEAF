@@ -8,7 +8,7 @@ export function CollectionsIndexPage() {
 
   return (
     <div className="container-app py-8">
-      <Seo title="All Collections" description="Browse all gardening collections at Green Leaf." />
+      <Seo title="All Collections" description="Browse all gardening collections at GreenKart." />
       <h1 className="mb-6 font-display text-2xl font-bold text-gray-900">All Collections</h1>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {isLoading

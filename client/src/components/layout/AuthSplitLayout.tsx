@@ -10,14 +10,14 @@ export function AuthSplitLayout({ children }: { children: ReactNode }) {
         <span className="absolute left-1/3 bottom-0 text-[120px] opacity-10" aria-hidden>🌱</span>
         <div className="relative flex h-full flex-col justify-between p-10 text-white">
           <Link to="/" className="flex items-center gap-2">
-            <img src="/leaf.svg" alt="" className="h-8 w-8" />
-            <span className="font-display text-xl font-bold">Green Leaf</span>
+            <img src="/brand/greenkart-icon.webp" alt="" className="h-8 w-8 object-contain" />
+            <span className="font-display text-xl font-bold">GreenKart</span>
           </Link>
           <div>
             <p className="font-display text-2xl font-semibold leading-snug">
               Everything your garden needs, delivered across India.
             </p>
-            <p className="mt-2 text-sm text-brand-100">Join thousands of home gardeners shopping with Green Leaf.</p>
+            <p className="mt-2 text-sm text-brand-100">Join thousands of home gardeners shopping with GreenKart.</p>
           </div>
         </div>
       </div>

@@ -34,7 +34,7 @@ export function RegisterPage() {
     <AuthSplitLayout>
       <Seo title="Register" />
       <h1 className="mb-1 font-display text-2xl font-bold text-gray-900">Create Your Account</h1>
-      <p className="mb-6 text-sm text-gray-500">Join Green Leaf and start growing.</p>
+      <p className="mb-6 text-sm text-gray-500">Join GreenKart and start growing.</p>
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
