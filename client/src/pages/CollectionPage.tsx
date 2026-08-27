@@ -11,6 +11,8 @@ import { Pagination } from '@/components/ui/Pagination';
 import { Seo } from '@/components/seo/Seo';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { applyCollectionFilterPatch } from '@/utils/collectionFilters';
+import type { CollectionFilterPatch } from '@/utils/collectionFilters';
 
 const VIRTUAL_COLLECTIONS: Record<string, { title: string; description: string; params: Record<string, boolean> }> = {
   'best-sellers': { title: 'Best Sellers', description: 'Our most loved gardening products.', params: { bestSeller: true } },
@@ -77,14 +79,8 @@ export function CollectionPage() {
     setSearchParams(next);
   }
 
-  function handleFilterChange(patch: { minPrice?: string; maxPrice?: string; inStockOnly?: boolean; minRating?: number; minDiscount?: number }) {
-    updateParams({
-      minPrice: patch.minPrice,
-      maxPrice: patch.maxPrice,
-      inStock: patch.inStockOnly,
-      minRating: patch.minRating,
-      minDiscount: patch.minDiscount,
-    });
+  function handleFilterChange(patch: CollectionFilterPatch) {
+    setSearchParams(applyCollectionFilterPatch(searchParams, patch));
   }
 
   const title = isVirtual ? virtual.title : category?.name ?? 'Collection';

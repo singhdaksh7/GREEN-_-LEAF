@@ -18,7 +18,7 @@
     "seed": "npm run seed --workspace server",
     "lint": "npm run lint --workspace server && npm run lint --workspace client",
     "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace client",
-    "test": "npm run test --workspace server"
+    "test": "npm run test --workspace server && npm run test --workspace client"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
