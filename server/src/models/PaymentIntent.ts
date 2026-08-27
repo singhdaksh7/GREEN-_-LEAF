@@ -26,6 +26,13 @@ export interface IPaymentIntent extends Document {
   amount: number;
   currency: string;
   status: PaymentIntentStatus;
+  // Set (and refreshed) whenever the intent transitions into PROCESSING —
+  // used purely as a crash-recovery fencing token: it lets a later
+  // reconciliation call detect a PROCESSING claim old enough to have almost
+  // certainly come from a crashed worker, and lets the finalize transaction
+  // detect (and safely abort) if it was superseded by a fresher reclaim
+  // before it could commit. See finalizePaymentIntent in payment.service.ts.
+  processingStartedAt: Date | null;
   failureReason: string | null;
   shippingAddress: IOrderAddress;
   couponCode: string | null;
@@ -76,6 +83,7 @@ const paymentIntentSchema = new Schema<IPaymentIntent>(
     amount: { type: Number, required: true },
     currency: { type: String, required: true, default: 'INR' },
     status: { type: String, enum: ['CREATED', 'PROCESSING', 'PAID', 'FAILED', 'REQUIRES_REFUND'], default: 'CREATED', index: true },
+    processingStartedAt: { type: Date, default: null },
     failureReason: { type: String, default: null },
     shippingAddress: { type: paymentIntentAddressSchema, required: true },
     couponCode: { type: String, default: null },

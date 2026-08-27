@@ -123,7 +123,13 @@ export function CheckoutPage() {
       theme: { color: '#16a34a' },
       handler: (response: RazorpaySuccessResponse) => {
         verifyRazorpayPaymentRequest(response)
-          .then((order) => {
+          .then((result) => {
+            if ('status' in result) {
+              toast.success("Payment received! We're confirming it with your bank — your order will appear in My Orders shortly.");
+              navigate('/account/orders');
+              return;
+            }
+            const order = result;
             toast.success('Payment successful! Order placed.');
             navigate(`/account/orders/${order._id}`, { state: { justPlaced: true } });
           })

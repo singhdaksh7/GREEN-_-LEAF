@@ -18,11 +18,13 @@ export async function createRazorpayOrderRequest(payload: {
   return res.data.data;
 }
 
+export type VerifyRazorpayPaymentResult = Order | { status: 'PENDING' };
+
 export async function verifyRazorpayPaymentRequest(payload: {
   razorpay_order_id: string;
   razorpay_payment_id: string;
   razorpay_signature: string;
-}): Promise<Order> {
-  const res = await api.post<ApiSuccess<Order>>('/payments/razorpay/verify', payload);
+}): Promise<VerifyRazorpayPaymentResult> {
+  const res = await api.post<ApiSuccess<VerifyRazorpayPaymentResult>>('/payments/razorpay/verify', payload);
   return res.data.data;
 }

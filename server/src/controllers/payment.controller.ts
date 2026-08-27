@@ -13,12 +13,22 @@ export const createRazorpayOrderHandler = asyncHandler(async (req: Request, res:
 
 export const verifyRazorpayPaymentHandler = asyncHandler(async (req: Request, res: Response) => {
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-  const order = await paymentService.verifyAndFinalizePayment(req.user!.id, {
+  const result = await paymentService.verifyAndFinalizePayment(req.user!.id, {
     razorpay_order_id,
     razorpay_payment_id,
     razorpay_signature,
   });
-  sendSuccess(res, order, 'Payment verified and order placed');
+
+  if (result.status === 'PENDING') {
+    // Authorized but not yet captured by Razorpay: nothing was fulfilled.
+    // The frontend should let the customer know their payment is being
+    // confirmed; the payment.captured/order.paid webhook will finalize the
+    // order once Razorpay actually captures it.
+    sendSuccess(res, { status: 'PENDING' }, 'Payment authorized, awaiting capture confirmation', 202);
+    return;
+  }
+
+  sendSuccess(res, result.order, 'Payment verified and order placed');
 });
 
 export const razorpayWebhookHandler = asyncHandler(async (req: Request, res: Response) => {

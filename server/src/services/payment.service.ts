@@ -9,6 +9,7 @@ import { getRazorpayClient, toPaise, timingSafeEqualHex, computeHmacSha256Hex } 
 import * as cartService from './cart.service';
 import { applyCoupon, validateCouponEligibility } from './pricing.service';
 import { ShippingAddressInput } from './order.service';
+import type { Payments } from 'razorpay/dist/types/payments';
 
 export interface RazorpayOrderInitData {
   keyId: string;
@@ -17,6 +18,17 @@ export interface RazorpayOrderInitData {
   currency: string;
   name: string;
 }
+
+// A crashed worker can never leave a PROCESSING intent stuck forever, but a
+// healthy in-flight finalize (which normally completes in well under a
+// second) must never be treated as abandoned. Five minutes is generously
+// long for the former and short enough that reconciliation isn't blocked
+// for long by the latter.
+const STALE_PROCESSING_MS = 5 * 60 * 1000;
+
+type RazorpayPaymentEntity = Payments.RazorpayPayment;
+
+type RazorpayCaptureCheck = { captured: true } | { captured: false; status: string };
 
 function generateOrderNumber(): string {
   const timestamp = Date.now().toString(36).toUpperCase();
@@ -105,6 +117,55 @@ export async function createRazorpayOrder(
   };
 }
 
+// The browser's checkout callback only ever carries an order id, a payment
+// id, and a signature — enough to prove the fields weren't tampered with,
+// but not enough to know the payment actually reached Razorpay's `captured`
+// state, or that its amount/currency/order really match what we expect.
+// Only a server-side fetch against the Razorpay API (using our own secret
+// key, never anything the browser supplied) can establish that. Webhook
+// payloads don't need this extra round-trip: their entity fields are
+// already covered by the webhook HMAC signature over the raw body.
+async function fetchAndValidateRazorpayPayment(
+  intent: IPaymentIntent,
+  razorpayPaymentId: string
+): Promise<RazorpayCaptureCheck> {
+  const client = getRazorpayClient();
+
+  let payment: RazorpayPaymentEntity;
+  try {
+    payment = await client.payments.fetch(razorpayPaymentId);
+  } catch (err) {
+    console.error('Failed to fetch payment status from Razorpay', {
+      paymentIntentId: intent._id,
+      razorpayPaymentId,
+      error: err instanceof Error ? err.message : err,
+    });
+    // Never forward the raw Razorpay SDK/API error (may include request
+    // internals) to the client.
+    throw ApiError.internal('Unable to verify your payment status right now. Please try again shortly.');
+  }
+
+  if (payment.id !== razorpayPaymentId) {
+    throw ApiError.badRequest('Payment verification failed: payment ID mismatch');
+  }
+  if (payment.order_id !== intent.razorpayOrderId) {
+    throw ApiError.badRequest('Payment verification failed: order ID mismatch');
+  }
+  if (Number(payment.amount) !== intent.amount) {
+    throw ApiError.badRequest('Payment verification failed: amount mismatch');
+  }
+  if (payment.currency !== 'INR') {
+    throw ApiError.badRequest('Payment verification failed: currency mismatch');
+  }
+
+  if (payment.status === 'captured') return { captured: true };
+  if (payment.status === 'authorized') return { captured: false, status: payment.status };
+
+  // created / failed / refunded (or any future status) are never valid to
+  // fulfill from — surface a clear rejection rather than silently finalizing.
+  throw ApiError.badRequest(`Payment verification failed: unexpected payment status "${payment.status}"`);
+}
+
 async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: string): Promise<IOrder> {
   if (intent.status === 'PAID' && intent.order) {
     const existing = await Order.findById(intent.order);
@@ -127,9 +188,9 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
   // deliberately runs outside the transaction below: single-document writes
   // are already atomic, and keeping the lock separate avoids write-conflict
   // retries between the two callers racing for it.
-  const claimed = await PaymentIntent.findOneAndUpdate(
+  let claimed = await PaymentIntent.findOneAndUpdate(
     { _id: intent._id, status: 'CREATED' },
-    { $set: { status: 'PROCESSING', razorpayPaymentId } },
+    { $set: { status: 'PROCESSING', razorpayPaymentId, processingStartedAt: new Date() } },
     { new: true }
   );
 
@@ -139,11 +200,43 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
       const existing = await Order.findById(current.order);
       if (existing) return existing;
     }
-    if (current?.status === 'PROCESSING') {
-      throw ApiError.conflict('This payment is already being processed');
+
+    if (current?.status === 'PROCESSING' && current.processingStartedAt) {
+      const isStale = current.processingStartedAt.getTime() <= Date.now() - STALE_PROCESSING_MS;
+      if (isStale) {
+        // The previous claimant almost certainly crashed before its
+        // transaction ever ran (e.g. the process died between the claim
+        // above and session.withTransaction starting), so nothing was
+        // mutated and it's safe to reclaim. Matching the exact prior
+        // processingStartedAt makes the reclaim itself a single-winner
+        // atomic operation: if two reconciliation calls race to reclaim the
+        // same stale intent, only the first write matches — the second sees
+        // an already-refreshed processingStartedAt and falls through to the
+        // conflict below instead of reclaiming twice.
+        claimed = await PaymentIntent.findOneAndUpdate(
+          { _id: intent._id, status: 'PROCESSING', processingStartedAt: current.processingStartedAt },
+          { $set: { razorpayPaymentId, processingStartedAt: new Date() } },
+          { new: true }
+        );
+      }
     }
-    throw ApiError.badRequest('This payment could not be finalized');
+
+    if (!claimed) {
+      if (current?.status === 'PROCESSING') {
+        throw ApiError.conflict('This payment is already being processed');
+      }
+      throw ApiError.badRequest('This payment could not be finalized');
+    }
   }
+
+  // Fencing token: if a stale reclaim happens to race with the original
+  // (not actually dead) worker resuming, both would otherwise commit
+  // independent transactions against the same claim. Requiring the intent's
+  // processingStartedAt to still equal what THIS caller claimed, checked as
+  // part of the same transaction that marks it PAID, means whichever caller
+  // loses the race has its transaction aborted (rolling back its own stock
+  // decrement/coupon reservation/order) instead of silently double-applying.
+  const claimToken = claimed.processingStartedAt;
 
   // From this point on, Razorpay has captured the payment and we hold the
   // sole claim on it. Stock decrement, coupon reservation, Order creation,
@@ -222,11 +315,16 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
         { session }
       );
 
-      await PaymentIntent.updateOne(
-        { _id: claimed._id },
+      const fenced = await PaymentIntent.updateOne(
+        { _id: claimed._id, processingStartedAt: claimToken },
         { $set: { status: 'PAID', order: created._id } },
         { session }
       );
+      if (fenced.matchedCount === 0) {
+        throw ApiError.conflict(
+          'This payment claim was superseded by a stale-recovery reclaim; aborting to avoid duplicate fulfillment'
+        );
+      }
 
       return created;
     });
@@ -252,8 +350,11 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
     // automatically — nothing partial can remain. What must never happen is
     // silently losing track of the money: flag it for manual refund.
     const failureReason = err instanceof Error ? err.message : 'Unknown error';
+    // Fenced the same way as the success path: if this claim was superseded
+    // by a fresher reclaim before we got here, don't clobber whatever state
+    // that reclaim (or its own success/failure) has since written.
     await PaymentIntent.updateOne(
-      { _id: claimed._id, status: 'PROCESSING' },
+      { _id: claimed._id, processingStartedAt: claimToken, status: 'PROCESSING' },
       { $set: { status: 'REQUIRES_REFUND', failureReason } }
     );
     console.error('Razorpay payment captured but GreenKart order fulfillment failed — REQUIRES_REFUND', {
@@ -276,7 +377,9 @@ export interface VerifyPaymentInput {
   razorpay_signature: string;
 }
 
-export async function verifyAndFinalizePayment(userId: string, input: VerifyPaymentInput): Promise<IOrder> {
+export type VerifyPaymentResult = { status: 'CONFIRMED'; order: IOrder } | { status: 'PENDING' };
+
+export async function verifyAndFinalizePayment(userId: string, input: VerifyPaymentInput): Promise<VerifyPaymentResult> {
   if (!env.razorpayKeySecret) throw ApiError.internal('Razorpay is not configured on this server');
 
   const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = input;
@@ -301,13 +404,42 @@ export async function verifyAndFinalizePayment(userId: string, input: VerifyPaym
     throw ApiError.badRequest('Payment verification failed: invalid signature');
   }
 
-  return finalizePaymentIntent(intent, razorpay_payment_id);
+  // Already finalized (duplicate verify, or the webhook beat us to it) —
+  // return the existing order without spending a Razorpay API call on it.
+  if (intent.status === 'PAID' && intent.order) {
+    const existing = await Order.findById(intent.order);
+    if (existing) return { status: 'CONFIRMED', order: existing };
+  }
+
+  // The signature only proves these fields weren't tampered with in
+  // transit — it says nothing about whether Razorpay actually captured the
+  // money yet. Auto-capture (see the dashboard setting documented alongside
+  // this feature) makes this effectively instantaneous in practice, but the
+  // backend must not assume that.
+  const check = await fetchAndValidateRazorpayPayment(intent, razorpay_payment_id);
+  if (!check.captured) {
+    // Authorized but not yet captured: do not touch stock, coupon, or
+    // create an order. The payment.captured/order.paid webhook will
+    // reconcile this PaymentIntent once Razorpay actually captures it.
+    return { status: 'PENDING' };
+  }
+
+  const order = await finalizePaymentIntent(intent, razorpay_payment_id);
+  return { status: 'CONFIRMED', order };
+}
+
+interface RazorpayWebhookPaymentEntity {
+  id?: string;
+  order_id?: string;
+  amount?: number;
+  currency?: string;
+  status?: string;
 }
 
 interface RazorpayWebhookPayload {
   event: string;
   payload?: {
-    payment?: { entity?: { id?: string; order_id?: string } };
+    payment?: { entity?: RazorpayWebhookPaymentEntity };
     order?: { entity?: { id?: string } };
   };
 }
@@ -328,6 +460,18 @@ export async function processWebhookEvent(payload: RazorpayWebhookPayload): Prom
     // own verification) already finalized it; FAILED/REQUIRES_REFUND mean
     // it's flagged for manual handling and must not be silently reprocessed.
     if (intent.status === 'PAID' || intent.status === 'FAILED' || intent.status === 'REQUIRES_REFUND') return;
+
+    // Unlike the browser's /verify callback, the webhook's entity fields are
+    // already covered by the HMAC signature over the raw request body (see
+    // payment.controller.ts), so they can be trusted directly here without
+    // an extra Razorpay API round-trip. Still validate them against the
+    // PaymentIntent before finalizing, exactly as /verify does after its own
+    // API fetch — a mismatch here would mean either a Razorpay-side anomaly
+    // or a payload that doesn't actually belong to this intent.
+    if (paymentEntity?.order_id && paymentEntity.order_id !== intent.razorpayOrderId) return;
+    if (typeof paymentEntity?.amount === 'number' && paymentEntity.amount !== intent.amount) return;
+    if (paymentEntity?.currency && paymentEntity.currency !== 'INR') return;
+    if (paymentEntity?.status && paymentEntity.status !== 'captured') return;
 
     await finalizePaymentIntent(intent, razorpayPaymentId);
     return;
