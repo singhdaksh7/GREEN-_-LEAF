@@ -27,6 +27,11 @@ export async function fetchMe(): Promise<User> {
   return res.data.data;
 }
 
+export async function refreshSessionRequest(): Promise<string> {
+  const res = await api.post<ApiSuccess<{ accessToken: string }>>('/auth/refresh', {});
+  return res.data.data.accessToken;
+}
+
 export async function changePasswordRequest(payload: { currentPassword: string; newPassword: string }): Promise<void> {
   await api.patch('/auth/password', payload);
 }

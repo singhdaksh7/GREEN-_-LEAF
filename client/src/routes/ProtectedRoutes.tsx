@@ -3,7 +3,10 @@ import { useAuthStore } from '@/store/useAuthStore';
 
 export function CustomerRoute() {
   const user = useAuthStore((s) => s.user);
+  const isRestoring = useAuthStore((s) => s.isRestoring);
   const location = useLocation();
+
+  if (isRestoring) return null;
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
@@ -14,7 +17,10 @@ export function CustomerRoute() {
 
 export function AdminRoute() {
   const user = useAuthStore((s) => s.user);
+  const isRestoring = useAuthStore((s) => s.isRestoring);
   const location = useLocation();
+
+  if (isRestoring) return null;
 
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
