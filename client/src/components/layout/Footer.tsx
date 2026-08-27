@@ -114,7 +114,7 @@ export function Footer() {
         <div className="container-app flex flex-col items-center justify-between gap-3 py-4 text-xs text-brand-300 sm:flex-row">
           <p>© {new Date().getFullYear()} GreenKart. All rights reserved.</p>
           <div className="flex items-center gap-2">
-            {['Cash on Delivery', 'UPI', 'Cards', 'Net Banking'].map((method) => (
+            {['Cash on Delivery', 'Secure Online Payments'].map((method) => (
               <span key={method} className="rounded border border-brand-700 px-2 py-1 text-[10px] font-medium text-brand-200">
                 {method}
               </span>

@@ -272,7 +272,7 @@ export function CheckoutPage() {
               </label>
               <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input type="radio" checked={paymentMethod === 'ONLINE'} onChange={() => setPaymentMethod('ONLINE')} />
-                Pay Online (Cards, UPI, Netbanking)
+                Pay Online
               </label>
             </div>
           </div>
