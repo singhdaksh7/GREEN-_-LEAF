@@ -26,7 +26,7 @@ const siteSettingsSchema = new Schema<ISiteSettings>(
     freeShippingThreshold: { type: Number, default: 999 },
     standardShippingFee: { type: Number, default: 79 },
     whatsappNumber: { type: String, default: '919999999999' },
-    contactEmail: { type: String, default: 'support@greenkart.example' },
+    contactEmail: { type: String, default: 'support@greenleaf.example' },
     contactPhone: { type: String, default: '+91 99999 99999' },
     contactAddress: { type: String, default: 'Bengaluru, Karnataka, India' },
     workingHours: { type: String, default: 'Mon - Sat, 9:00 AM - 6:00 PM' },
