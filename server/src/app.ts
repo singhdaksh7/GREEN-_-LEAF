@@ -12,6 +12,7 @@ import apiRoutes from './routes';
 import { notFoundHandler, errorHandler } from './middleware/error-handler';
 import { apiRateLimiter } from './middleware/rate-limit';
 import { robotsTxt, sitemapXml } from './controllers/sitemap.controller';
+import { razorpayWebhookHandler } from './controllers/payment.controller';
 
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
 
@@ -29,6 +30,13 @@ export function createApp(): Express {
   app.use(helmet());
   app.use(cors({ origin: env.clientUrl, credentials: true }));
   app.use(compression());
+
+  // Must be registered before the JSON body parser below: Razorpay webhook
+  // signature verification needs the exact raw request bytes, and this
+  // route fully handles (and terminates) the request before it ever
+  // reaches express.json().
+  app.use('/api/payments/razorpay/webhook', express.raw({ type: 'application/json' }), razorpayWebhookHandler);
+
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());

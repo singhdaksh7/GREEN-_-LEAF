@@ -10,10 +10,13 @@ import { Button } from '@/components/ui/Button';
 import { Seo } from '@/components/seo/Seo';
 import { formatInr } from '@/utils/format';
 import { placeOrderRequest } from '@/api/orders';
+import { createRazorpayOrderRequest, verifyRazorpayPaymentRequest } from '@/api/payments';
 import { validateCouponRequest, CouponValidation } from '@/api/coupons';
 import { fetchAddresses } from '@/api/account';
 import { getErrorMessage } from '@/api/axios';
 import { useAuthStore } from '@/store/useAuthStore';
+import { loadRazorpayScript } from '@/utils/razorpay';
+import { RazorpayFailureResponse, RazorpaySuccessResponse } from '@/types/razorpay';
 
 const addressSchema = z.object({
   fullName: z.string().min(1, 'Full name is required'),
@@ -35,6 +38,7 @@ export function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState<'COD' | 'ONLINE'>('COD');
   const [couponInput, setCouponInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState<CouponValidation | null>(null);
+  const [isPayingOnline, setIsPayingOnline] = useState(false);
 
   const { data: addresses = [] } = useQuery({ queryKey: ['addresses'], queryFn: fetchAddresses });
 
@@ -85,7 +89,72 @@ export function CheckoutPage() {
   const shipping = appliedCoupon?.freeShipping ? 0 : cart.shipping;
   const grandTotal = Math.max(0, cart.subtotal - discount + shipping);
 
+  async function payOnline(values: AddressForm) {
+    if (isPayingOnline) return;
+    setIsPayingOnline(true);
+
+    const scriptLoaded = await loadRazorpayScript();
+    if (!scriptLoaded || !window.Razorpay) {
+      toast.error('Could not load the payment gateway. Please check your connection and try again.');
+      setIsPayingOnline(false);
+      return;
+    }
+
+    let initData;
+    try {
+      initData = await createRazorpayOrderRequest({
+        shippingAddress: values,
+        couponCode: appliedCoupon?.code ?? null,
+      });
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Could not start online payment'));
+      setIsPayingOnline(false);
+      return;
+    }
+
+    const rzp = new window.Razorpay({
+      key: initData.keyId,
+      amount: initData.amount,
+      currency: initData.currency,
+      name: initData.name,
+      description: 'GreenKart order payment',
+      order_id: initData.orderId,
+      prefill: { name: values.fullName, email: values.email, contact: values.phone },
+      theme: { color: '#16a34a' },
+      handler: (response: RazorpaySuccessResponse) => {
+        verifyRazorpayPaymentRequest(response)
+          .then((order) => {
+            toast.success('Payment successful! Order placed.');
+            navigate(`/account/orders/${order._id}`, { state: { justPlaced: true } });
+          })
+          .catch((error) => {
+            toast.error(
+              getErrorMessage(
+                error,
+                'Payment verification failed. If the amount was deducted, please contact support with your payment ID.'
+              )
+            );
+          })
+          .finally(() => setIsPayingOnline(false));
+      },
+      modal: {
+        ondismiss: () => setIsPayingOnline(false),
+      },
+    });
+
+    rzp.on('payment.failed', (response: RazorpayFailureResponse) => {
+      toast.error(response.error?.description || 'Payment failed. Please try again.');
+      setIsPayingOnline(false);
+    });
+
+    rzp.open();
+  }
+
   function onSubmit(values: AddressForm) {
+    if (paymentMethod === 'ONLINE') {
+      void payOnline(values);
+      return;
+    }
     placeOrder.mutate({
       shippingAddress: values,
       paymentMethod,
@@ -195,9 +264,9 @@ export function CheckoutPage() {
                 <input type="radio" checked={paymentMethod === 'COD'} onChange={() => setPaymentMethod('COD')} />
                 Cash on Delivery
               </label>
-              <label className="flex items-center gap-2 text-sm text-gray-400">
-                <input type="radio" disabled checked={paymentMethod === 'ONLINE'} onChange={() => setPaymentMethod('ONLINE')} />
-                Online Payment — Coming Soon
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="radio" checked={paymentMethod === 'ONLINE'} onChange={() => setPaymentMethod('ONLINE')} />
+                Pay Online (Cards, UPI, Netbanking)
               </label>
             </div>
           </div>
@@ -254,8 +323,8 @@ export function CheckoutPage() {
             <span>{formatInr(grandTotal)}</span>
           </div>
 
-          <Button type="submit" className="mt-5 w-full" isLoading={placeOrder.isPending}>
-            Place Order
+          <Button type="submit" className="mt-5 w-full" isLoading={placeOrder.isPending || isPayingOnline}>
+            {paymentMethod === 'ONLINE' ? 'Pay Now' : 'Place Order'}
           </Button>
         </div>
       </form>

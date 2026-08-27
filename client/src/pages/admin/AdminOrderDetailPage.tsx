@@ -29,7 +29,12 @@ export function AdminOrderDetailPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl font-bold text-gray-900">Order #{order.orderNumber}</h1>
+        <div>
+          <h1 className="font-display text-2xl font-bold text-gray-900">Order #{order.orderNumber}</h1>
+          <p className="text-xs text-gray-500">
+            Payment Method: {order.paymentMethod === 'ONLINE' ? 'Razorpay' : 'COD'} · Payment Status: {order.paymentStatus}
+          </p>
+        </div>
         <select
           value={order.orderStatus}
           onChange={(e) => statusMutation.mutate(e.target.value as OrderStatus)}

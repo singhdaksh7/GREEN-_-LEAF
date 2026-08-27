@@ -20,7 +20,9 @@ export function OrderDetailPage() {
             <h2 className="text-base font-semibold text-gray-900">Order #{order.orderNumber}</h2>
             <p className="text-xs text-gray-400">Placed on {formatDate(order.createdAt)}</p>
           </div>
-          <span className="text-sm font-medium text-gray-600">Payment: {order.paymentStatus}</span>
+          <span className="text-sm font-medium text-gray-600">
+            {order.paymentMethod === 'ONLINE' ? 'Razorpay' : 'COD'} · Payment: {order.paymentStatus}
+          </span>
         </div>
         <OrderTimeline status={order.orderStatus} />
       </div>

@@ -56,6 +56,8 @@ export interface IOrder extends Document {
   couponCode: string | null;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
+  razorpayOrderId: string | null;
+  razorpayPaymentId: string | null;
   orderStatus: OrderStatus;
   statusHistory: IStatusHistoryEntry[];
   createdAt: Date;
@@ -113,6 +115,8 @@ const orderSchema = new Schema<IOrder>(
     couponCode: { type: String, default: null },
     paymentMethod: { type: String, enum: ['COD', 'ONLINE'], required: true },
     paymentStatus: { type: String, enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED', 'COD'], default: 'PENDING' },
+    razorpayOrderId: { type: String, default: null, sparse: true, unique: true },
+    razorpayPaymentId: { type: String, default: null, sparse: true, unique: true },
     orderStatus: { type: String, enum: [
       'PENDING', 'CONFIRMED', 'PROCESSING', 'PACKED', 'SHIPPED',
       'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED', 'RETURN_REQUESTED', 'RETURNED',

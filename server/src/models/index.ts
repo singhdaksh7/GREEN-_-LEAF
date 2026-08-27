@@ -6,6 +6,7 @@ export * from './Review';
 export * from './Cart';
 export * from './Wishlist';
 export * from './Order';
+export * from './PaymentIntent';
 export * from './Coupon';
 export * from './BulkOrderInquiry';
 export * from './NewsletterSubscriber';
