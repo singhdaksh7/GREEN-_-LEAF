@@ -20,4 +20,7 @@ export const env = {
   jwtRefreshExpires: process.env.JWT_REFRESH_EXPIRES ?? '7d',
   clientUrl: process.env.CLIENT_URL ?? 'http://localhost:5173',
   isProd: process.env.NODE_ENV === 'production',
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? '',
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
 };

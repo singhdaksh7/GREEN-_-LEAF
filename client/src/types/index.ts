@@ -135,6 +135,8 @@ export interface Order {
   couponCode: string | null;
   paymentMethod: 'COD' | 'ONLINE';
   paymentStatus: PaymentStatus;
+  razorpayOrderId?: string | null;
+  razorpayPaymentId?: string | null;
   orderStatus: OrderStatus;
   statusHistory: { status: OrderStatus; changedAt: string; note?: string }[];
   createdAt: string;
