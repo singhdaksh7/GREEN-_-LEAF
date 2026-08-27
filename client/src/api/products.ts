@@ -10,6 +10,7 @@ export interface ProductListParams {
   minRating?: number;
   minDiscount?: number;
   brand?: string;
+  attributes?: Record<string, string[]>;
   tag?: string;
   q?: string;
   featured?: boolean;
@@ -21,7 +22,9 @@ export interface ProductListParams {
 }
 
 export async function fetchProducts(params: ProductListParams): Promise<PaginatedResult<Product>> {
-  const res = await api.get<ApiSuccess<PaginatedResult<Product>>>('/products', { params });
+  const { attributes, ...baseParams } = params;
+  const attributeParams = Object.fromEntries(Object.entries(attributes ?? {}).filter(([, values]) => values.length).map(([key, values]) => [`attr_${key}`, values.join(',')]));
+  const res = await api.get<ApiSuccess<PaginatedResult<Product>>>('/products', { params: { ...baseParams, ...attributeParams } });
   return res.data.data;
 }
 

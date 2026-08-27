@@ -11,6 +11,7 @@ export interface ProductQuery {
   minRating?: number;
   minDiscount?: number;
   brand?: string;
+  attributes?: Record<string, string[]>;
   tag?: string;
   q?: string;
   featured?: boolean;
@@ -43,8 +44,9 @@ export async function listProducts(query: ProductQuery) {
   }
 
   if (query.subcategory) {
-    const subcategory = await Category.findOne({ slug: query.subcategory });
-    if (subcategory) filter.subcategory = subcategory._id;
+    const slugs = query.subcategory.split(',').filter(Boolean);
+    const subcategories = await Category.find({ slug: { $in: slugs }, isActive: true }).select('_id');
+    filter.subcategory = { $in: subcategories.map((category) => category._id) };
   }
 
   if (query.minPrice !== undefined || query.maxPrice !== undefined) {
@@ -53,7 +55,7 @@ export async function listProducts(query: ProductQuery) {
     if (query.maxPrice !== undefined) filter.salePrice.$lte = query.maxPrice;
   }
 
-  if (query.inStock) filter.stock = { $gt: 0 };
+  if (query.inStock) filter.$or = [{ stock: { $gt: 0 } }, { 'variants.stock': { $gt: 0 } }];
   if (query.minRating !== undefined) filter.averageRating = { $gte: query.minRating };
   if (query.brand) filter.brand = query.brand;
   if (query.tag) filter.tags = query.tag;
@@ -61,6 +63,12 @@ export async function listProducts(query: ProductQuery) {
   if (query.bestSeller) filter.bestSeller = true;
   if (query.newArrival) filter.newArrival = true;
   if (query.q) filter.$text = { $search: query.q };
+  if (query.attributes) {
+    const attributeGroups = Object.entries(query.attributes)
+      .filter(([, values]) => values.length)
+      .map(([key, values]) => ({ variants: { $elemMatch: { [`attributes.${key}`]: { $in: values } } } }));
+    if (attributeGroups.length) filter.$and = attributeGroups;
+  }
 
   const pipeline: PipelineStage[] = [
     { $match: filter },
@@ -94,12 +102,25 @@ export async function listProducts(query: ProductQuery) {
 
   const totalProducts = countResult[0]?.total ?? 0;
 
+  const facetFilter: FilterQuery<IProduct> = { ...filter };
+  delete facetFilter.variants;
+  const [facetRows, subcategories] = await Promise.all([
+    Product.aggregate<{ variants: { attributes?: Record<string, string> }[] }>([{ $match: facetFilter }, { $project: { variants: 1 } }]),
+    filter.category ? Category.find({ parent: filter.category, isActive: true }).select('name slug').sort({ order: 1, name: 1 }).lean() : [],
+  ]);
+  const attributes: Record<string, Set<string>> = {};
+  facetRows.forEach((product) => product.variants.forEach((variant) => Object.entries(variant.attributes ?? {}).forEach(([key, value]) => {
+    if (!attributes[key]) attributes[key] = new Set();
+    attributes[key].add(value);
+  })));
+
   return {
     products,
     page,
     limit,
     totalProducts,
     totalPages: Math.max(1, Math.ceil(totalProducts / limit)),
+    filterOptions: { subcategories, attributes: Object.fromEntries(Object.entries(attributes).map(([key, values]) => [key, [...values].sort()])) },
   };
 }
 

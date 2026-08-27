@@ -57,6 +57,7 @@ export interface PaginatedResult<T> {
   totalProducts: number;
   totalPages: number;
   products: T[];
+  filterOptions?: { subcategories: { name: string; slug: string }[]; attributes: Record<string, string[]> };
 }
 
 export interface CartLine {
