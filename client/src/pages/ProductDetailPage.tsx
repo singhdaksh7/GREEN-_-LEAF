@@ -13,6 +13,7 @@ import { Tabs } from '@/components/ui/Tabs';
 import { ProductReviews } from '@/components/product/ProductReviews';
 import { ProductGrid } from '@/components/product/ProductGrid';
 import { Seo } from '@/components/seo/Seo';
+import { absoluteUrl } from '@/utils/siteUrl';
 import { useAddToCart } from '@/hooks/useCart';
 import { useToggleWishlist, useWishlist } from '@/hooks/useWishlist';
 import { cn } from '@/utils/cn';
@@ -71,15 +72,28 @@ export function ProductDetailPage() {
       <Seo
         title={product.name}
         description={product.shortDescription}
-        jsonLd={{
-          '@context': 'https://schema.org',
-          '@type': 'Product',
-          name: product.name,
-          image: product.images,
-          description: product.shortDescription,
-          sku: product.sku,
-          offers: { '@type': 'Offer', price: salePrice, priceCurrency: 'INR', availability: isOutOfStock ? 'OutOfStock' : 'InStock' },
-        }}
+        image={product.images[0]}
+        type="product"
+        jsonLd={[
+          {
+            '@context': 'https://schema.org',
+            '@type': 'Product',
+            name: product.name,
+            image: product.images,
+            description: product.shortDescription,
+            sku: product.sku,
+            offers: { '@type': 'Offer', price: salePrice, priceCurrency: 'INR', availability: isOutOfStock ? 'OutOfStock' : 'InStock' },
+          },
+          {
+            '@context': 'https://schema.org',
+            '@type': 'BreadcrumbList',
+            itemListElement: [
+              { '@type': 'ListItem', position: 1, name: 'Home', item: absoluteUrl('/') },
+              ...(categoryName ? [{ '@type': 'ListItem', position: 2, name: categoryName }] : []),
+              { '@type': 'ListItem', position: categoryName ? 3 : 2, name: product.name, item: absoluteUrl(`/products/${product.slug}`) },
+            ],
+          },
+        ]}
       />
 
       <nav className="mb-4 text-xs text-gray-500">

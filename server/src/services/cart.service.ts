@@ -1,3 +1,4 @@
+import { ClientSession } from 'mongoose';
 import { Cart, ICart } from '../models/Cart';
 import { Product } from '../models/Product';
 import { SiteSettings } from '../models/SiteSettings';
@@ -52,8 +53,8 @@ export async function removeCartItem(userId: string, productId: string, variantS
   return cart;
 }
 
-export async function clearCart(userId: string): Promise<void> {
-  await Cart.findOneAndUpdate({ user: userId }, { items: [] });
+export async function clearCart(userId: string, session?: ClientSession): Promise<void> {
+  await Cart.findOneAndUpdate({ user: userId }, { items: [] }, { session });
 }
 
 export async function priceCart(cart: ICart) {

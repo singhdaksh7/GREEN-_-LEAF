@@ -7,7 +7,7 @@ const variantSchema = z.object({
   salePrice: z.number().nonnegative(),
   stock: z.number().int().nonnegative(),
   images: z.array(z.string()).default([]),
-});
+}).strict();
 
 export const productSchema = z.object({
   body: z.object({
@@ -31,7 +31,7 @@ export const productSchema = z.object({
     seoTitle: z.string().optional(),
     seoDescription: z.string().optional(),
     isActive: z.boolean().optional(),
-  }),
+  }).strict(),
 });
 
 export const categorySchema = z.object({
@@ -42,7 +42,7 @@ export const categorySchema = z.object({
     parent: z.string().nullable().optional(),
     order: z.number().optional(),
     isActive: z.boolean().optional(),
-  }),
+  }).strict(),
 });
 
 export const couponSchema = z.object({
@@ -55,7 +55,7 @@ export const couponSchema = z.object({
     expiresAt: z.string().nullable().optional(),
     usageLimit: z.number().int().positive().nullable().optional(),
     isActive: z.boolean().optional(),
-  }),
+  }).strict(),
 });
 
 export const blogPostSchema = z.object({
@@ -66,7 +66,31 @@ export const blogPostSchema = z.object({
     content: z.string().min(1),
     coverImage: z.string().min(1),
     isPublished: z.boolean().optional(),
-  }),
+  }).strict(),
+});
+
+// --- Update (PATCH) schemas -------------------------------------------------
+// These intentionally mirror the create schemas but make every field
+// optional so a partial edit cannot accidentally wipe fields (e.g. variants,
+// tags) that were simply left out of the request body. `.strict()` rejects
+// any unknown/extra keys instead of silently ignoring them, and immutable
+// fields (slug, usedCount, author, etc.) are never included so they cannot
+// be overwritten via PATCH regardless of what the client sends.
+
+export const productUpdateSchema = z.object({
+  body: productSchema.shape.body.partial().strict(),
+});
+
+export const categoryUpdateSchema = z.object({
+  body: categorySchema.shape.body.partial().strict(),
+});
+
+export const couponUpdateSchema = z.object({
+  body: couponSchema.shape.body.partial().strict(),
+});
+
+export const blogPostUpdateSchema = z.object({
+  body: blogPostSchema.shape.body.partial().strict(),
 });
 
 export const settingsSchema = z.object({
@@ -84,6 +108,6 @@ export const settingsSchema = z.object({
       facebook: z.string().optional(),
       youtube: z.string().optional(),
       linkedin: z.string().optional(),
-    }).optional(),
-  }),
+    }).strict().optional(),
+  }).strict(),
 });

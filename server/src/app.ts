@@ -11,6 +11,7 @@ import { env } from './config/env';
 import apiRoutes from './routes';
 import { notFoundHandler, errorHandler } from './middleware/error-handler';
 import { apiRateLimiter } from './middleware/rate-limit';
+import { robotsTxt, sitemapXml } from './controllers/sitemap.controller';
 
 const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
 
@@ -49,6 +50,9 @@ export function createApp(): Express {
       database: dbConnected ? 'connected' : 'disconnected',
     });
   });
+
+  app.get('/robots.txt', robotsTxt);
+  app.get('/sitemap.xml', sitemapXml);
 
   app.use('/api', apiRateLimiter, apiRoutes);
   app.use('/api', notFoundHandler);

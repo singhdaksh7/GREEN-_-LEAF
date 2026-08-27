@@ -4,16 +4,18 @@ import { sendSuccess } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { User } from '../../models/User';
 import { Order } from '../../models/Order';
+import { buildSafeContainsRegex } from '../../utils/regex';
 
 export const listCustomers = asyncHandler(async (req: Request, res: Response) => {
   const page = Number(req.query.page) || 1;
   const limit = Math.min(100, Number(req.query.limit) || 20);
   const filter: Record<string, unknown> = { role: 'CUSTOMER' };
   if (req.query.q) {
+    const regex = buildSafeContainsRegex(String(req.query.q));
     filter.$or = [
-      { firstName: new RegExp(String(req.query.q), 'i') },
-      { lastName: new RegExp(String(req.query.q), 'i') },
-      { email: new RegExp(String(req.query.q), 'i') },
+      { firstName: regex },
+      { lastName: regex },
+      { email: regex },
     ];
   }
 

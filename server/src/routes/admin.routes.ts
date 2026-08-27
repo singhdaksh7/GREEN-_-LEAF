@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
-import { productSchema, categorySchema, couponSchema, blogPostSchema, settingsSchema } from '../validators/admin.validators';
+import {
+  productSchema, categorySchema, couponSchema, blogPostSchema, settingsSchema,
+  productUpdateSchema, categoryUpdateSchema, couponUpdateSchema, blogPostUpdateSchema,
+} from '../validators/admin.validators';
 import { updateOrderStatusSchema } from '../validators/order.validators';
 
 import { getDashboardStats } from '../controllers/admin/dashboard.controller';
@@ -23,12 +26,12 @@ router.get('/dashboard', getDashboardStats);
 
 router.get('/products', adminProducts.listAdminProducts);
 router.post('/products', validate(productSchema), adminProducts.createAdminProduct);
-router.patch('/products/:id', adminProducts.updateAdminProduct);
+router.patch('/products/:id', validate(productUpdateSchema), adminProducts.updateAdminProduct);
 router.delete('/products/:id', adminProducts.deleteAdminProduct);
 
 router.get('/categories', adminCategories.listAdminCategories);
 router.post('/categories', validate(categorySchema), adminCategories.createAdminCategory);
-router.patch('/categories/:id', adminCategories.updateAdminCategory);
+router.patch('/categories/:id', validate(categoryUpdateSchema), adminCategories.updateAdminCategory);
 router.delete('/categories/:id', adminCategories.deleteAdminCategory);
 
 router.get('/orders', adminOrders.listAdminOrders);
@@ -41,7 +44,7 @@ router.patch('/customers/:id/active', adminCustomers.setCustomerActive);
 
 router.get('/coupons', adminCoupons.listAdminCoupons);
 router.post('/coupons', validate(couponSchema), adminCoupons.createAdminCoupon);
-router.patch('/coupons/:id', adminCoupons.updateAdminCoupon);
+router.patch('/coupons/:id', validate(couponUpdateSchema), adminCoupons.updateAdminCoupon);
 router.delete('/coupons/:id', adminCoupons.disableAdminCoupon);
 
 router.get('/reviews', adminReviews.listAdminReviews);
@@ -52,7 +55,7 @@ router.patch('/bulk-orders/:id/status', adminBulkOrders.updateAdminBulkOrderStat
 
 router.get('/blog', adminBlog.listAdminBlogPosts);
 router.post('/blog', validate(blogPostSchema), adminBlog.createAdminBlogPost);
-router.patch('/blog/:id', adminBlog.updateAdminBlogPost);
+router.patch('/blog/:id', validate(blogPostUpdateSchema), adminBlog.updateAdminBlogPost);
 router.delete('/blog/:id', adminBlog.deleteAdminBlogPost);
 
 router.patch('/settings', validate(settingsSchema), adminSettings.updateAdminSettings);

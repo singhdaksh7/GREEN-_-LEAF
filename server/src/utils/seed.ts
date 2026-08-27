@@ -237,14 +237,14 @@ const SAMPLE_REVIEW_TEXT = [
 ];
 
 async function seedAdmin() {
-  const existing = await User.findOne({ email: 'admin@greenleaf.example' });
+  const existing = await User.findOne({ email: 'admin@greenkart.example' });
   if (existing) return existing;
 
   const passwordHash = await bcrypt.hash('Admin@12345', 12);
   return User.create({
     firstName: 'Green',
     lastName: 'Admin',
-    email: 'admin@greenleaf.example',
+    email: 'admin@greenkart.example',
     phone: '9999999999',
     passwordHash,
     role: 'SUPER_ADMIN',
@@ -252,14 +252,14 @@ async function seedAdmin() {
 }
 
 async function seedDemoCustomer() {
-  const existing = await User.findOne({ email: 'customer@greenleaf.example' });
+  const existing = await User.findOne({ email: 'customer@greenkart.example' });
   if (existing) return existing;
 
   const passwordHash = await bcrypt.hash('Customer@12345', 12);
   return User.create({
     firstName: 'Asha',
     lastName: 'Rao',
-    email: 'customer@greenleaf.example',
+    email: 'customer@greenkart.example',
     phone: '9876543210',
     passwordHash,
     role: 'CUSTOMER',
@@ -482,13 +482,13 @@ async function run() {
 
   await SiteSettings.findOneAndUpdate({ key: 'default' }, { key: 'default' }, { upsert: true });
   await NewsletterSubscriber.findOneAndUpdate(
-    { email: 'newsletter-demo@greenleaf.example' },
-    { email: 'newsletter-demo@greenleaf.example', isActive: true },
+    { email: 'newsletter-demo@greenkart.example' },
+    { email: 'newsletter-demo@greenkart.example', isActive: true },
     { upsert: true }
   );
 
-  console.log('[seed] Done. Demo admin login: admin@greenleaf.example / Admin@12345');
-  console.log('[seed] Demo customer login: customer@greenleaf.example / Customer@12345');
+  console.log('[seed] Done. Demo admin login: admin@greenkart.example / Admin@12345');
+  console.log('[seed] Demo customer login: customer@greenkart.example / Customer@12345');
 
   await mongoose.disconnect();
   process.exit(0);

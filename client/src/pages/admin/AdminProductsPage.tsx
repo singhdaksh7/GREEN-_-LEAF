@@ -96,16 +96,20 @@ export function AdminProductsPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = {
+    const payload: Record<string, unknown> = {
       ...form,
       images: form.images.split(',').map((s) => s.trim()).filter(Boolean),
-      variants: [],
-      tags: [],
     };
     if (editing) {
+      // Intentionally omit `variants`/`tags` on edit: this form does not
+      // expose a variant/tag editor, and sending `[]` for either would wipe
+      // out whatever the product already had. Leaving the keys out entirely
+      // means the backend partial-update schema leaves them untouched.
       updateMutation.mutate({ id: editing._id, payload });
     } else {
-      createMutation.mutate(payload);
+      // New products have no existing variants/tags yet, so defaulting to
+      // empty arrays here is safe and matches the create schema's defaults.
+      createMutation.mutate({ ...payload, variants: [], tags: [] });
     }
   }
 

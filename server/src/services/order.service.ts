@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Order, IOrder, OrderStatus, PaymentMethod } from '../models/Order';
 import { Product } from '../models/Product';
 import { Coupon } from '../models/Coupon';
@@ -55,57 +56,93 @@ export async function createOrder(
   const tax = 0;
   const grandTotal = Math.max(0, priced.subtotal - discount + shipping + tax);
 
-  // Decrement stock atomically per line
-  for (const line of priced.lines) {
-    if (line.variantSku) {
-      const product = await Product.findOneAndUpdate(
-        { _id: line.productId, variants: { $elemMatch: { sku: line.variantSku, stock: { $gte: line.quantity } } } },
-        { $inc: { 'variants.$.stock': -line.quantity } }
+  // Stock decrement, coupon usage, order creation, and clearing the cart must
+  // all succeed or all roll back together: if we decremented stock and then
+  // failed to reserve coupon usage (or vice versa), we'd otherwise be left
+  // with stock gone but no order, or an order with a coupon that was never
+  // actually reserved. A session/transaction gives us that atomicity instead
+  // of hand-rolling compensating writes for every failure path.
+  const session = await mongoose.startSession();
+  try {
+    const order = await session.withTransaction(async () => {
+      // Decrement stock atomically per line, conditioned on sufficient stock
+      // still being available at write time (protects against concurrent
+      // orders both passing the earlier read-only stock check).
+      for (const line of priced.lines) {
+        if (line.variantSku) {
+          const product = await Product.findOneAndUpdate(
+            { _id: line.productId, variants: { $elemMatch: { sku: line.variantSku, stock: { $gte: line.quantity } } } },
+            { $inc: { 'variants.$.stock': -line.quantity } },
+            { session }
+          );
+          if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
+        } else {
+          const product = await Product.findOneAndUpdate(
+            { _id: line.productId, stock: { $gte: line.quantity } },
+            { $inc: { stock: -line.quantity } },
+            { session }
+          );
+          if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
+        }
+      }
+
+      // Reserve coupon usage atomically: only increment if the coupon is
+      // still active and (when limited) still below its usage limit. This
+      // is the same check-and-increment race that $inc-without-condition
+      // would miss under concurrent checkouts.
+      if (coupon) {
+        const reserved = await Coupon.findOneAndUpdate(
+          {
+            _id: coupon._id,
+            isActive: true,
+            $or: [{ usageLimit: null }, { $expr: { $lt: ['$usedCount', '$usageLimit'] } }],
+          },
+          { $inc: { usedCount: 1 } },
+          { session }
+        );
+        if (!reserved) throw ApiError.badRequest('This coupon has just reached its usage limit. Please remove it and try again.');
+      }
+
+      const [created] = await Order.create(
+        [
+          {
+            orderNumber: generateOrderNumber(),
+            user: userId,
+            items: priced.lines.map((line) => ({
+              product: line.productId,
+              productName: line.name,
+              productImage: line.image,
+              sku: line.variantSku ?? line.slug,
+              variant: line.variant,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              totalPrice: line.totalPrice,
+            })),
+            shippingAddress,
+            subtotal: priced.subtotal,
+            discount,
+            shipping,
+            tax,
+            grandTotal,
+            couponCode: coupon?.code ?? null,
+            paymentMethod,
+            paymentStatus: paymentMethod === 'COD' ? 'COD' : 'PENDING',
+            orderStatus: 'PENDING',
+            statusHistory: [{ status: 'PENDING', changedAt: new Date() }],
+          },
+        ],
+        { session }
       );
-      if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
-    } else {
-      const product = await Product.findOneAndUpdate(
-        { _id: line.productId, stock: { $gte: line.quantity } },
-        { $inc: { stock: -line.quantity } }
-      );
-      if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
-    }
+
+      await cartService.clearCart(userId, session);
+
+      return created;
+    });
+
+    return order as IOrder;
+  } finally {
+    await session.endSession();
   }
-
-  const order = await Order.create({
-    orderNumber: generateOrderNumber(),
-    user: userId,
-    items: priced.lines.map((line) => ({
-      product: line.productId,
-      productName: line.name,
-      productImage: line.image,
-      sku: line.variantSku ?? line.slug,
-      variant: line.variant,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      totalPrice: line.totalPrice,
-    })),
-    shippingAddress,
-    subtotal: priced.subtotal,
-    discount,
-    shipping,
-    tax,
-    grandTotal,
-    couponCode: coupon?.code ?? null,
-    paymentMethod,
-    paymentStatus: paymentMethod === 'COD' ? 'COD' : 'PENDING',
-    orderStatus: 'PENDING',
-    statusHistory: [{ status: 'PENDING', changedAt: new Date() }],
-  });
-
-  if (coupon) {
-    coupon.usedCount += 1;
-    await coupon.save();
-  }
-
-  await cartService.clearCart(userId);
-
-  return order;
 }
 
 export async function updateOrderStatus(orderId: string, status: OrderStatus, note?: string): Promise<IOrder> {
