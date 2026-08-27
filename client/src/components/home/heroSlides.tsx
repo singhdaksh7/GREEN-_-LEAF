@@ -1,6 +1,3 @@
-import type { ComponentType } from 'react';
-import { GardenVisual, PlantersVisual, ToolsVisual } from './HeroSlideVisuals';
-
 export interface HeroSlide {
   id: string;
   eyebrow?: string;
@@ -9,12 +6,10 @@ export interface HeroSlide {
   ctaLabel?: string;
   ctaUrl?: string;
   alt: string;
-  /** Real desktop banner image, when available. Falls back to Visual when omitted. */
+  /** Real desktop banner image. Until supplied, the slide renders a blank neutral surface. */
   desktopImage?: string;
-  /** Real mobile banner image, when available. Falls back to desktopImage/Visual when omitted. */
+  /** Real mobile banner image. Falls back to desktopImage, then the blank neutral surface, when omitted. */
   mobileImage?: string;
-  /** CSS/SVG placeholder visual used until real marketing photography is supplied. */
-  Visual: ComponentType<{ className?: string }>;
 }
 
 export const HERO_SLIDES: HeroSlide[] = [
@@ -26,7 +21,6 @@ export const HERO_SLIDES: HeroSlide[] = [
     ctaLabel: 'Shop Now',
     ctaUrl: '/collections',
     alt: 'A sunlit home garden with potted plants, ready to shop on GreenKart',
-    Visual: GardenVisual,
   },
   {
     id: 'pots-and-planters',
@@ -36,7 +30,6 @@ export const HERO_SLIDES: HeroSlide[] = [
     ctaLabel: 'Explore Planters',
     ctaUrl: '/collections/pots-and-planters',
     alt: 'Assorted ceramic and terracotta planters styled for indoor and outdoor spaces',
-    Visual: PlantersVisual,
   },
   {
     id: 'tools-soil-plant-care',
@@ -46,6 +39,5 @@ export const HERO_SLIDES: HeroSlide[] = [
     ctaLabel: 'Explore Gardening Essentials',
     ctaUrl: '/collections/gardening-accessories',
     alt: 'Gardening tools, soil and a watering can laid out for plant care',
-    Visual: ToolsVisual,
   },
 ];
