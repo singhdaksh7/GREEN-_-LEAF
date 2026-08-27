@@ -4,12 +4,13 @@ import { sendCreated, sendSuccess } from '../../utils/ApiResponse';
 import { ApiError } from '../../utils/ApiError';
 import { Product } from '../../models/Product';
 import { generateUniqueSlug } from '../../utils/slug';
+import { buildSafeContainsRegex } from '../../utils/regex';
 
 export const listAdminProducts = asyncHandler(async (req: Request, res: Response) => {
   const page = Number(req.query.page) || 1;
   const limit = Math.min(100, Number(req.query.limit) || 20);
   const filter: Record<string, unknown> = {};
-  if (req.query.q) filter.name = new RegExp(String(req.query.q), 'i');
+  if (req.query.q) filter.name = buildSafeContainsRegex(String(req.query.q));
   if (req.query.category) filter.category = req.query.category;
 
   const [products, total] = await Promise.all([

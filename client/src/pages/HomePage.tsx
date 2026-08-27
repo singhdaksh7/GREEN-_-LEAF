@@ -1,4 +1,5 @@
 import { Seo } from '@/components/seo/Seo';
+import { absoluteUrl } from '@/utils/siteUrl';
 import { Hero } from '@/components/home/Hero';
 import { CollectionRail } from '@/components/home/CollectionRail';
 import { ProductSection } from '@/components/home/ProductSection';
@@ -16,7 +17,8 @@ export function HomePage() {
           '@context': 'https://schema.org',
           '@type': 'Organization',
           name: 'GreenKart',
-          url: 'https://greenleaf.example',
+          url: absoluteUrl('/'),
+          logo: absoluteUrl('/brand/greenkart-icon.webp'),
         }}
       />
       <Hero />

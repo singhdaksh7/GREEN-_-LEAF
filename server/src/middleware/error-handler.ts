@@ -8,7 +8,7 @@ export function notFoundHandler(req: Request, _res: Response, next: NextFunction
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
+export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof ZodError) {
     res.status(400).json({
       success: false,
@@ -28,10 +28,12 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   }
 
   const message = err instanceof Error ? err.message : 'Internal server error';
-  if (!env.isProd) {
-    // eslint-disable-next-line no-console
-    console.error(err);
-  }
+
+  // Unexpected errors are always logged server-side (including in production)
+  // so on-call/diagnostics have a trail, while the response sent to the
+  // client never leaks stack traces, messages, or other internal detail.
+  // eslint-disable-next-line no-console
+  console.error(`[error] ${req.method} ${req.originalUrl}`, err instanceof Error ? err.stack ?? err.message : err);
 
   res.status(500).json({
     success: false,

@@ -4,6 +4,7 @@ import { sendSuccess } from '../utils/ApiResponse';
 import { Product } from '../models/Product';
 import { Category } from '../models/Category';
 import { listProducts } from '../services/product.service';
+import { buildSafeContainsRegex } from '../utils/regex';
 
 export const search = asyncHandler(async (req: Request, res: Response) => {
   const q = (req.query.q as string | undefined)?.trim() ?? '';
@@ -27,7 +28,7 @@ export const suggest = asyncHandler(async (req: Request, res: Response) => {
     return sendSuccess(res, { products: [], categories: [] }, 'Suggestions');
   }
 
-  const regex = new RegExp(q, 'i');
+  const regex = buildSafeContainsRegex(q);
 
   const [products, categories] = await Promise.all([
     Product.find({ isActive: true, $or: [{ name: regex }, { tags: regex }, { brand: regex }] })
