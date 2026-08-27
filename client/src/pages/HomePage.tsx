@@ -1,6 +1,6 @@
 import { Seo } from '@/components/seo/Seo';
 import { absoluteUrl } from '@/utils/siteUrl';
-import { Hero } from '@/components/home/Hero';
+import { HeroCarousel } from '@/components/home/HeroCarousel';
 import { CollectionRail } from '@/components/home/CollectionRail';
 import { ProductSection } from '@/components/home/ProductSection';
 import { PromoBanners } from '@/components/home/PromoBanners';
@@ -21,7 +21,7 @@ export function HomePage() {
           logo: absoluteUrl('/brand/greenkart-icon.webp'),
         }}
       />
-      <Hero />
+      <HeroCarousel />
       <CollectionRail />
       <ProductSection title="Best Sellers" subtitle="Loved by gardeners across India" viewAllTo="/collections/best-sellers" params={{ bestSeller: true }} />
       <ProductSection title="Today's Gardening Deals" subtitle="Save more on handpicked essentials" viewAllTo="/collections/offers" params={{ minDiscount: 20, sort: 'discount-desc' }} />
