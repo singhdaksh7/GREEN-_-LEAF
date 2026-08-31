@@ -7,6 +7,7 @@ import { useSettings } from './useSettings';
 import { CartLine, PricedCart, Product, ProductVariant } from '@/types';
 import { getErrorMessage } from '@/api/axios';
 import { useUiStore } from '@/store/useUiStore';
+import { getOrderedImageUrls } from '@/utils/productImage';
 
 function resolveVariant(product: Product, variantSku: string | null): ProductVariant | null {
   if (!variantSku) return null;
@@ -84,7 +85,7 @@ export function useAddToCart() {
         quantity,
         name: product.name,
         slug: product.slug,
-        image: variant?.images[0] ?? product.images[0] ?? '',
+        image: variant?.images[0] ?? getOrderedImageUrls(product)[0] ?? '',
         unitPrice: variant?.salePrice ?? product.salePrice,
         mrp: variant?.mrp ?? product.mrp,
         variant: variant?.attributes ?? null,

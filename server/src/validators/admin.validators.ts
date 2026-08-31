@@ -9,6 +9,14 @@ const variantSchema = z.object({
   images: z.array(z.string()).default([]),
 }).strict();
 
+const productImageSchema = z.object({
+  url: z.string().min(1),
+  key: z.string().default(''),
+  alt: z.string().optional().default(''),
+  isPrimary: z.boolean(),
+  sortOrder: z.number().int(),
+}).strict();
+
 export const productSchema = z.object({
   body: z.object({
     name: z.string().min(1),
@@ -19,7 +27,7 @@ export const productSchema = z.object({
     brand: z.string().optional(),
     category: z.string().min(1),
     subcategory: z.string().nullable().optional(),
-    images: z.array(z.string()).default([]),
+    images: z.array(productImageSchema).default([]),
     variants: z.array(variantSchema).default([]),
     mrp: z.number().nonnegative(),
     salePrice: z.number().nonnegative(),
@@ -30,7 +38,10 @@ export const productSchema = z.object({
     newArrival: z.boolean().optional(),
     seoTitle: z.string().optional(),
     seoDescription: z.string().optional(),
-    isActive: z.boolean().optional(),
+    // Publish state; not `isActive` directly — that flag is now derived
+    // server-side from `status` (see Product model) to avoid two sources
+    // of truth for the same visibility concept.
+    status: z.enum(['DRAFT', 'PUBLISHED', 'ARCHIVED']).default('DRAFT'),
   }).strict(),
 });
 

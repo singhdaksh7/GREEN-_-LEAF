@@ -5,6 +5,7 @@ import { Search, X } from 'lucide-react';
 import { suggestSearch } from '@/api/search';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatInr } from '@/utils/format';
+import { getOrderedImageUrls, onProductImageError } from '@/utils/productImage';
 
 export function SearchBar({ className = '' }: { className?: string }) {
   const [term, setTerm] = useState('');
@@ -97,7 +98,7 @@ export function SearchBar({ className = '' }: { className?: string }) {
                   }}
                   className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-brand-50"
                 >
-                  <img src={p.images[0]} alt="" className="h-8 w-8 rounded object-cover" />
+                  <img src={getOrderedImageUrls(p)[0]} onError={onProductImageError} alt="" className="h-8 w-8 rounded object-cover" />
                   <span className="flex-1 truncate text-sm text-gray-700">{p.name}</span>
                   <span className="text-xs font-medium text-gray-500">{formatInr(p.salePrice)}</span>
                 </button>

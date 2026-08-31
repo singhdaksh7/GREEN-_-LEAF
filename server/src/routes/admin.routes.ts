@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middleware/authenticate';
 import { validate } from '../middleware/validate';
+import { uploadProductImagesMiddleware } from '../middleware/upload';
+import { uploadRateLimiter } from '../middleware/rate-limit';
 import {
   productSchema, categorySchema, couponSchema, blogPostSchema, settingsSchema,
   productUpdateSchema, categoryUpdateSchema, couponUpdateSchema, blogPostUpdateSchema,
@@ -9,6 +11,7 @@ import { updateOrderStatusSchema } from '../validators/order.validators';
 
 import { getDashboardStats } from '../controllers/admin/dashboard.controller';
 import * as adminProducts from '../controllers/admin/products.controller';
+import { uploadProductImages } from '../controllers/admin/uploads.controller';
 import * as adminCategories from '../controllers/admin/categories.controller';
 import * as adminOrders from '../controllers/admin/orders.controller';
 import * as adminCustomers from '../controllers/admin/customers.controller';
@@ -25,9 +28,12 @@ router.use(authenticate, authorize('ADMIN', 'SUPER_ADMIN'));
 router.get('/dashboard', getDashboardStats);
 
 router.get('/products', adminProducts.listAdminProducts);
+router.get('/products/:id', adminProducts.getAdminProduct);
 router.post('/products', validate(productSchema), adminProducts.createAdminProduct);
 router.patch('/products/:id', validate(productUpdateSchema), adminProducts.updateAdminProduct);
 router.delete('/products/:id', adminProducts.deleteAdminProduct);
+
+router.post('/uploads/images', uploadRateLimiter, uploadProductImagesMiddleware, uploadProductImages);
 
 router.get('/categories', adminCategories.listAdminCategories);
 router.post('/categories', validate(categorySchema), adminCategories.createAdminCategory);

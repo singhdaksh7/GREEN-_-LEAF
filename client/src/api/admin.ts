@@ -1,5 +1,5 @@
 import { api } from './axios';
-import { ApiSuccess, BlogPost, Category, Order, OrderStatus, Product, User } from '@/types';
+import { ApiSuccess, BlogPost, Category, Order, OrderStatus, Product, ProductImage, User } from '@/types';
 
 export interface DashboardStats {
   revenue: number;
@@ -17,14 +17,41 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
   return res.data.data;
 }
 
-export async function fetchAdminProducts(params: { page?: number; q?: string; category?: string }) {
+export async function fetchAdminProducts(params: { page?: number; q?: string; category?: string; status?: string }) {
   const res = await api.get<ApiSuccess<{ products: Product[]; page: number; total: number; totalPages: number }>>('/admin/products', { params });
+  return res.data.data;
+}
+
+export async function fetchAdminProduct(id: string): Promise<Product> {
+  const res = await api.get<ApiSuccess<Product>>(`/admin/products/${id}`);
   return res.data.data;
 }
 
 export async function createAdminProductRequest(payload: Record<string, unknown>): Promise<Product> {
   const res = await api.post<ApiSuccess<Product>>('/admin/products', payload);
   return res.data.data;
+}
+
+interface UploadedImageResponse {
+  key: string;
+  url: string;
+  thumbnailKey: string;
+  thumbnailUrl: string;
+  width: number;
+  height: number;
+}
+
+export async function uploadProductImagesRequest(files: File[]): Promise<UploadedImageResponse[]> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('images', file));
+  const res = await api.post<ApiSuccess<{ images: UploadedImageResponse[] }>>('/admin/uploads/images', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return res.data.data.images;
+}
+
+export function uploadedImageToProductImage(uploaded: UploadedImageResponse, sortOrder: number, isPrimary: boolean): ProductImage {
+  return { url: uploaded.url, key: uploaded.key, alt: '', isPrimary, sortOrder };
 }
 
 export async function updateAdminProductRequest(id: string, payload: Record<string, unknown>): Promise<Product> {

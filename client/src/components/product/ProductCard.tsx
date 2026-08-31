@@ -6,6 +6,7 @@ import { useToggleWishlist, useWishlist } from '@/hooks/useWishlist';
 import { useUiStore } from '@/store/useUiStore';
 import { cn } from '@/utils/cn';
 import { discountPercent, formatInr } from '@/utils/format';
+import { getOrderedImageUrls, onProductImageError } from '@/utils/productImage';
 
 interface ProductCardProps {
   product: Product;
@@ -20,8 +21,9 @@ export function ProductCard({ product }: ProductCardProps) {
   const isOutOfStock = product.stock <= 0 && product.variants.length === 0;
   const pct = discountPercent(product.mrp, product.salePrice);
 
-  const mainImage = product.images[0];
-  const hoverImage = product.images[1] ?? product.images[0];
+  const imageUrls = getOrderedImageUrls(product);
+  const mainImage = imageUrls[0];
+  const hoverImage = imageUrls[1] ?? imageUrls[0];
 
   return (
     <div className="group relative flex h-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white transition-all duration-200 hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-cardHover">
@@ -45,12 +47,14 @@ export function ProductCard({ product }: ProductCardProps) {
 
         <img
           src={mainImage}
+          onError={onProductImageError}
           alt={product.name}
           loading="lazy"
           className="h-full w-full object-contain p-4 transition-opacity duration-300 group-hover:opacity-0 sm:p-6"
         />
         <img
           src={hoverImage}
+          onError={onProductImageError}
           alt=""
           loading="lazy"
           className="absolute inset-0 h-full w-full object-contain p-4 opacity-0 transition-opacity duration-300 group-hover:opacity-100 sm:p-6"

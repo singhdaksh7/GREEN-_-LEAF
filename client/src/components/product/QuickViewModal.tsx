@@ -10,6 +10,7 @@ import { QuantitySelector } from '@/components/ui/QuantitySelector';
 import { Button } from '@/components/ui/Button';
 import { useAddToCart } from '@/hooks/useCart';
 import { useEscapeClose } from '@/hooks/useEscapeClose';
+import { getOrderedImageUrls, onProductImageError } from '@/utils/productImage';
 
 export function QuickViewModal() {
   const slug = useUiStore((s) => s.quickViewProductSlug);
@@ -54,7 +55,8 @@ export function QuickViewModal() {
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             <img
-              src={activeVariant?.images[0] ?? product.images[0]}
+              src={activeVariant?.images[0] ?? getOrderedImageUrls(product)[0]}
+              onError={onProductImageError}
               alt={product.name}
               className="aspect-square w-full rounded-lg object-cover"
             />

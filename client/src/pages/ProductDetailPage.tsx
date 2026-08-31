@@ -18,6 +18,7 @@ import { useAddToCart } from '@/hooks/useCart';
 import { useToggleWishlist, useWishlist } from '@/hooks/useWishlist';
 import { cn } from '@/utils/cn';
 import { formatInr } from '@/utils/format';
+import { getOrderedImageUrls } from '@/utils/productImage';
 
 export function ProductDetailPage() {
   const { slug = '' } = useParams();
@@ -51,7 +52,7 @@ export function ProductDetailPage() {
   }
 
   const isSaved = productIds.includes(product._id);
-  const images = activeVariant?.images.length ? activeVariant.images : product.images;
+  const images = activeVariant?.images.length ? activeVariant.images : getOrderedImageUrls(product);
   const mrp = activeVariant?.mrp ?? product.mrp;
   const salePrice = activeVariant?.salePrice ?? product.salePrice;
   const stock = activeVariant?.stock ?? product.stock;
@@ -72,14 +73,14 @@ export function ProductDetailPage() {
       <Seo
         title={product.name}
         description={product.shortDescription}
-        image={product.images[0]}
+        image={images[0]}
         type="product"
         jsonLd={[
           {
             '@context': 'https://schema.org',
             '@type': 'Product',
             name: product.name,
-            image: product.images,
+            image: images,
             description: product.shortDescription,
             sku: product.sku,
             offers: { '@type': 'Offer', price: salePrice, priceCurrency: 'INR', availability: isOutOfStock ? 'OutOfStock' : 'InStock' },

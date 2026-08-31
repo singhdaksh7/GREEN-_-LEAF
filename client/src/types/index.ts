@@ -26,6 +26,16 @@ export interface ProductVariant {
   images: string[];
 }
 
+export interface ProductImage {
+  url: string;
+  key: string;
+  alt: string;
+  isPrimary: boolean;
+  sortOrder: number;
+}
+
+export type ProductStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+
 export interface Product {
   _id: string;
   name: string;
@@ -37,7 +47,7 @@ export interface Product {
   brand: string;
   category: Category | string;
   subcategory?: Category | string | null;
-  images: string[];
+  images: ProductImage[];
   variants: ProductVariant[];
   mrp: number;
   salePrice: number;
@@ -48,7 +58,11 @@ export interface Product {
   newArrival: boolean;
   averageRating: number;
   reviewCount: number;
+  seoTitle?: string;
+  seoDescription?: string;
+  status: ProductStatus;
   isActive: boolean;
+  updatedAt?: string;
 }
 
 export interface PaginatedResult<T> {

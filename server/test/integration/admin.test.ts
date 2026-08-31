@@ -1,9 +1,10 @@
-import { beforeAll, afterAll, afterEach, describe, it, expect } from 'vitest';
+import { beforeAll, afterAll, afterEach, describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app';
 import { setupTestDb, teardownTestDb, clearTestDb } from '../helpers/testDb';
 import { createUser, authHeaderFor, createCategory, createProduct } from '../helpers/factories';
 import { Product } from '../../src/models/Product';
+import { storageProvider } from '../../src/storage';
 
 const app = createApp();
 
@@ -90,5 +91,90 @@ describe('PATCH /api/admin/products/:id', () => {
     const persisted = await Product.findById(product.id);
     expect(persisted!.tags).toEqual(['bestseller', 'indoor']);
     expect(persisted!.variants).toHaveLength(1);
+  });
+});
+
+describe('draft vs published visibility', () => {
+  it('does not expose a draft product on the public storefront, but publishing makes it visible', async () => {
+    const admin = await createUser({ role: 'ADMIN' });
+    const category = await createCategory();
+    const draft = await createProduct(category.id, { name: 'Draft Cactus', status: 'DRAFT' });
+
+    const draftListRes = await request(app).get('/api/products');
+    expect(draftListRes.body.data.products.map((p: { name: string }) => p.name)).not.toContain('Draft Cactus');
+
+    const draftDetailRes = await request(app).get(`/api/products/${draft.slug}`);
+    expect(draftDetailRes.status).toBe(404);
+
+    const publishRes = await request(app)
+      .patch(`/api/admin/products/${draft.id}`)
+      .set('Authorization', authHeaderFor(admin))
+      .send({ status: 'PUBLISHED' });
+    expect(publishRes.status).toBe(200);
+    expect(publishRes.body.data.status).toBe('PUBLISHED');
+    expect(publishRes.body.data.isActive).toBe(true);
+
+    const publishedListRes = await request(app).get('/api/products');
+    expect(publishedListRes.body.data.products.map((p: { name: string }) => p.name)).toContain('Draft Cactus');
+  });
+
+  it('archiving a product (DELETE) hides it from the storefront and syncs isActive', async () => {
+    const admin = await createUser({ role: 'ADMIN' });
+    const category = await createCategory();
+    const product = await createProduct(category.id, { status: 'PUBLISHED' });
+
+    const res = await request(app)
+      .delete(`/api/admin/products/${product.id}`)
+      .set('Authorization', authHeaderFor(admin));
+    expect(res.status).toBe(200);
+    expect(res.body.data.status).toBe('ARCHIVED');
+    expect(res.body.data.isActive).toBe(false);
+
+    const listRes = await request(app).get('/api/products');
+    expect(listRes.body.data.products.map((p: { _id: string }) => p._id)).not.toContain(product.id);
+  });
+});
+
+describe('product image lifecycle', () => {
+  it('lets an admin fetch a single product regardless of status', async () => {
+    const admin = await createUser({ role: 'ADMIN' });
+    const category = await createCategory();
+    const draft = await createProduct(category.id, { status: 'DRAFT' });
+
+    const res = await request(app)
+      .get(`/api/admin/products/${draft.id}`)
+      .set('Authorization', authHeaderFor(admin));
+    expect(res.status).toBe(200);
+    expect(res.body.data._id).toBe(draft.id);
+  });
+
+  it('deletes the underlying file for a removed image but keeps the ones still referenced', async () => {
+    const admin = await createUser({ role: 'ADMIN' });
+    const category = await createCategory();
+    const product = await createProduct(category.id, {
+      images: [
+        { url: '/uploads/products/keep.webp', key: 'products/keep.webp', alt: '', isPrimary: true, sortOrder: 0 },
+        { url: '/uploads/products/remove.webp', key: 'products/remove.webp', alt: '', isPrimary: false, sortOrder: 1 },
+      ],
+    });
+
+    const deleteSpy = vi.spyOn(storageProvider, 'delete').mockResolvedValue(undefined);
+
+    const res = await request(app)
+      .patch(`/api/admin/products/${product.id}`)
+      .set('Authorization', authHeaderFor(admin))
+      .send({
+        images: [
+          { url: '/uploads/products/keep.webp', key: 'products/keep.webp', alt: '', isPrimary: true, sortOrder: 0 },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(deleteSpy).toHaveBeenCalledWith('products/remove.webp');
+    expect(deleteSpy).toHaveBeenCalledWith('products/remove-thumb.webp');
+    expect(deleteSpy).not.toHaveBeenCalledWith('products/keep.webp');
+    expect(deleteSpy).not.toHaveBeenCalledWith('products/keep-thumb.webp');
+
+    deleteSpy.mockRestore();
   });
 });

@@ -328,7 +328,7 @@ async function seedProducts(subcategoryBySlug: Map<string, mongoose.Types.Object
       generateProductImage(seed.name, emoji, 0),
       generateProductImage(seed.name, emoji, 1),
       generateProductImage(seed.name, emoji, 2),
-    ];
+    ].map((url, idx) => ({ url, key: '', alt: seed.name, isPrimary: idx === 0, sortOrder: idx }));
 
     const variants = (seed.variants ?? []).map((v, idx) => ({
       sku: `${sku}-V${idx + 1}`,
@@ -362,7 +362,7 @@ async function seedProducts(subcategoryBySlug: Map<string, mongoose.Types.Object
         newArrival: Boolean(seed.newArrival),
         seoTitle: seed.name,
         seoDescription: `Buy ${seed.name} online at the best price. Fast delivery across India.`,
-        isActive: true,
+        status: 'PUBLISHED',
       },
       { upsert: true, new: true }
     );

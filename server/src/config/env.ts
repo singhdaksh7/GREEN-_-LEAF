@@ -1,6 +1,17 @@
+import path from 'node:path';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+function resolveUploadUrlPath(baseUrl: string): string {
+  try {
+    // Absolute URL (e.g. https://example.com/uploads) -> use just the path.
+    return new URL(baseUrl).pathname || '/uploads';
+  } catch {
+    // Already a bare path (e.g. /uploads).
+    return baseUrl.startsWith('/') ? baseUrl : `/${baseUrl}`;
+  }
+}
 
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -23,4 +34,17 @@ export const env = {
   razorpayKeyId: process.env.RAZORPAY_KEY_ID ?? '',
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET ?? '',
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? '',
+
+  // File storage: defaults to a local, persistent directory suitable for any
+  // normal Linux host (BigRock, a VPS, etc). Override UPLOAD_DIR with an
+  // absolute path outside the app's own directory in production (e.g.
+  // /home/<cpanel-user>/greenkart_uploads) so uploads survive redeploys.
+  storageProvider: process.env.STORAGE_PROVIDER ?? 'local',
+  uploadDir: process.env.UPLOAD_DIR
+    ? path.resolve(process.env.UPLOAD_DIR)
+    : path.resolve(process.cwd(), 'uploads'),
+  uploadBaseUrl: process.env.UPLOAD_BASE_URL ?? '/uploads',
+  get uploadUrlPath(): string {
+    return resolveUploadUrlPath(this.uploadBaseUrl);
+  },
 };
