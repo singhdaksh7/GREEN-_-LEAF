@@ -25,7 +25,7 @@ function makeProduct(overrides: Partial<IProduct> = {}): IProduct {
     mrp: 200,
     salePrice: 150,
     stock: 10,
-    images: ['main.jpg'],
+    images: [{ url: 'main.jpg', key: '', alt: '', isPrimary: true, sortOrder: 0 }],
     variants: [
       { sku: 'SKU-1-V1', attributes: { size: 'Large' }, mrp: 300, salePrice: 220, stock: 5, images: ['variant.jpg'] },
     ],

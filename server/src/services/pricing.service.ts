@@ -19,7 +19,7 @@ export function resolveProductPrice(product: IProduct, variantSku?: string | nul
     return {
       sku: variant.sku,
       productName: product.name,
-      productImage: variant.images[0] ?? product.images[0] ?? '',
+      productImage: variant.images[0] ?? product.images[0]?.url ?? '',
       variant: variant.attributes,
       mrp: variant.mrp,
       unitPrice: variant.salePrice,
@@ -30,7 +30,7 @@ export function resolveProductPrice(product: IProduct, variantSku?: string | nul
   return {
     sku: product.sku,
     productName: product.name,
-    productImage: product.images[0] ?? '',
+    productImage: product.images[0]?.url ?? '',
     variant: null,
     mrp: product.mrp,
     unitPrice: product.salePrice,

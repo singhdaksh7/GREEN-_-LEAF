@@ -34,11 +34,11 @@ export async function createProduct(categoryId: string, overrides: Record<string
     description: 'A lovely ceramic pot for your favourite plant.',
     sku: `SKU-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     category: categoryId,
-    images: ['pot.jpg'],
+    images: [{ url: 'pot.jpg', key: '', alt: '', isPrimary: true, sortOrder: 0 }],
     mrp: 500,
     salePrice: 400,
     stock: 10,
-    isActive: true,
+    status: 'PUBLISHED',
     ...overrides,
   });
 }

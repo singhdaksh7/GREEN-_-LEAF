@@ -29,3 +29,14 @@ export const apiRateLimiter = rateLimit({
   keyGenerator: clientKey,
   message: { success: false, message: 'Too many requests, please slow down.' },
 });
+
+// Image processing (sharp resize/encode) is far more expensive per-request
+// than a typical JSON admin call, so uploads get their own, stricter bucket.
+export const uploadRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: clientKey,
+  message: { success: false, message: 'Too many uploads, please slow down.' },
+});

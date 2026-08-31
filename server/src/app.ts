@@ -62,6 +62,11 @@ export function createApp(): Express {
   app.get('/robots.txt', robotsTxt);
   app.get('/sitemap.xml', sitemapXml);
 
+  // Serves uploaded product images from the configured persistent directory
+  // (UPLOAD_DIR). On hosts where Apache/cPanel is configured to serve this
+  // directory directly, this route is redundant but harmless.
+  app.use(env.uploadUrlPath, express.static(env.uploadDir));
+
   app.use('/api', apiRateLimiter, apiRoutes);
   app.use('/api', notFoundHandler);
 
