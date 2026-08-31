@@ -54,3 +54,11 @@ export async function updateCategory(id: string, data: Prisma.CategoryUpdateInpu
 export function deactivateCategory(id: string): Promise<Category> {
   return prisma.category.update({ where: { id }, data: { isActive: false } });
 }
+
+export function suggestCategories(q: string, limit = 4) {
+  return prisma.category.findMany({
+    where: { isActive: true, name: { contains: q } },
+    select: { name: true, slug: true },
+    take: limit,
+  });
+}

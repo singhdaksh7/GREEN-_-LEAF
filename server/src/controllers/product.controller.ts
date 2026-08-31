@@ -2,8 +2,8 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { sendSuccess } from '../utils/ApiResponse';
 import { ApiError } from '../utils/ApiError';
-import { listProducts, getProductBySlug, getRelatedProducts } from '../services/product.service';
-import { Review } from '../models/Review';
+import * as productRepository from '../repositories/product.repository';
+import * as reviewRepository from '../repositories/review.repository';
 
 const attributeQueryKey = /^attr_([A-Za-z][A-Za-z0-9_]{0,39})$/;
 
@@ -26,7 +26,7 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
   if ((minPrice !== undefined && minPrice < 0) || (maxPrice !== undefined && maxPrice < 0) || (minPrice !== undefined && maxPrice !== undefined && minPrice > maxPrice)) {
     throw ApiError.badRequest('Price filters must be non-negative and minimum cannot exceed maximum');
   }
-  const result = await listProducts({
+  const result = await productRepository.listPublicProducts({
     category: req.query.category as string | undefined,
     subcategory: req.query.subcategory as string | undefined,
     minPrice, maxPrice,
@@ -49,13 +49,13 @@ export const getProducts = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const getProduct = asyncHandler(async (req: Request, res: Response) => {
-  const product = await getProductBySlug(req.params.slug);
+  const product = await productRepository.findProductBySlug(req.params.slug, true);
   if (!product) throw ApiError.notFound('Product not found');
 
-  const [related, reviews] = await Promise.all([
-    getRelatedProducts(product),
-    Review.find({ product: product._id, isApproved: true }).sort({ createdAt: -1 }).limit(10).populate('user', 'name'),
+  const [related, { reviews }] = await Promise.all([
+    productRepository.getRelatedProducts(product),
+    reviewRepository.listApprovedReviewsForProduct(product.id, 1, 10),
   ]);
 
-  sendSuccess(res, { product, related, reviews }, 'Product retrieved successfully');
+  sendSuccess(res, { product: productRepository.toApiProduct(product), related, reviews }, 'Product retrieved successfully');
 });

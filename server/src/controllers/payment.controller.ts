@@ -3,7 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { sendCreated, sendSuccess } from '../utils/ApiResponse';
 import { env } from '../config/env';
 import { timingSafeEqualHex, computeHmacSha256Hex, isRazorpayConfigured } from '../utils/razorpay';
-import * as paymentService from '../services/payment.service';
+import * as paymentService from '../repositories/payment.repository';
 
 // This endpoint deliberately exposes only an enablement flag. It lets the
 // checkout adapt when Razorpay credentials are added to the hosting

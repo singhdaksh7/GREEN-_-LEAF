@@ -1,29 +1,34 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { sendSuccess } from '../../utils/ApiResponse';
-import { Order } from '../../models/Order';
-import { Product } from '../../models/Product';
-import { User } from '../../models/User';
-import { BulkOrderInquiry } from '../../models/BulkOrderInquiry';
+import { prisma } from '../../config/db';
 
 export const getDashboardStats = asyncHandler(async (_req: Request, res: Response) => {
   const [revenueAgg, orderCount, customerCount, productCount, lowStockProducts, pendingOrders, recentOrders, pendingInquiries] =
     await Promise.all([
-      Order.aggregate([
-        { $match: { paymentStatus: { $in: ['PAID', 'COD'] } } },
-        { $group: { _id: null, total: { $sum: '$grandTotal' } } },
-      ]),
-      Order.countDocuments(),
-      User.countDocuments({ role: 'CUSTOMER' }),
-      Product.countDocuments(),
-      Product.find({ stock: { $lte: 10 }, isActive: true }).select('name slug stock').limit(10),
-      Order.countDocuments({ orderStatus: 'PENDING' }),
-      Order.find().sort({ createdAt: -1 }).limit(10).populate('user', 'name email'),
-      BulkOrderInquiry.countDocuments({ status: 'NEW' }),
+      prisma.order.aggregate({
+        where: { paymentStatus: { in: ['PAID', 'COD'] } },
+        _sum: { grandTotal: true },
+      }),
+      prisma.order.count(),
+      prisma.user.count({ where: { role: 'CUSTOMER' } }),
+      prisma.product.count(),
+      prisma.product.findMany({
+        where: { stock: { lte: 10 }, status: 'PUBLISHED' },
+        select: { name: true, slug: true, stock: true },
+        take: 10,
+      }),
+      prisma.order.count({ where: { orderStatus: 'PENDING' } }),
+      prisma.order.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        include: { user: { select: { name: true, email: true } } },
+      }),
+      prisma.bulkOrderInquiry.count({ where: { status: 'NEW' } }),
     ]);
 
   sendSuccess(res, {
-    revenue: revenueAgg[0]?.total ?? 0,
+    revenue: revenueAgg._sum.grandTotal ?? 0,
     orderCount,
     customerCount,
     productCount,

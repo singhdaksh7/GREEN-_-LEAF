@@ -1,9 +1,7 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { env } from '../config/env';
-import { Product } from '../models/Product';
-import { Category } from '../models/Category';
-import { BlogPost } from '../models/BlogPost';
+import { prisma } from '../config/db';
 
 const STATIC_PATHS = ['/', '/about', '/contact', '/blog', '/track-order', '/bulk-orders'];
 
@@ -26,9 +24,9 @@ export const robotsTxt = asyncHandler(async (_req: Request, res: Response) => {
 
 export const sitemapXml = asyncHandler(async (_req: Request, res: Response) => {
   const [products, categories, posts] = await Promise.all([
-    Product.find({ isActive: true }).select('slug updatedAt').limit(2000).lean(),
-    Category.find({ isActive: true }).select('slug updatedAt').limit(500).lean(),
-    BlogPost.find({ isPublished: true }).select('slug updatedAt').limit(500).lean(),
+    prisma.product.findMany({ where: { status: 'PUBLISHED' }, select: { slug: true, updatedAt: true }, take: 2000 }),
+    prisma.category.findMany({ where: { isActive: true }, select: { slug: true, updatedAt: true }, take: 500 }),
+    prisma.blogPost.findMany({ where: { isPublished: true }, select: { slug: true, updatedAt: true }, take: 500 }),
   ]);
 
   const urls = [

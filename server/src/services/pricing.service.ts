@@ -1,5 +1,5 @@
-import { IProduct } from '../models/Product';
-import { ICoupon } from '../models/Coupon';
+import { Coupon } from '@prisma/client';
+import { ProductWithRelations } from '../repositories/product.repository';
 import { ApiError } from '../utils/ApiError';
 
 export interface ResolvedLine {
@@ -12,17 +12,17 @@ export interface ResolvedLine {
   stock: number;
 }
 
-export function resolveProductPrice(product: IProduct, variantSku?: string | null): ResolvedLine {
+export function resolveProductPrice(product: ProductWithRelations, variantSku?: string | null): ResolvedLine {
   if (variantSku) {
     const variant = product.variants.find((v) => v.sku === variantSku);
     if (!variant) throw ApiError.badRequest(`Variant ${variantSku} not found for product ${product.name}`);
     return {
       sku: variant.sku,
       productName: product.name,
-      productImage: variant.images[0] ?? product.images[0]?.url ?? '',
-      variant: variant.attributes,
-      mrp: variant.mrp,
-      unitPrice: variant.salePrice,
+      productImage: variant.images[0]?.url ?? product.images[0]?.url ?? '',
+      variant: Object.fromEntries(variant.attributes.map((a) => [a.key, a.value])),
+      mrp: Number(variant.mrp),
+      unitPrice: Number(variant.salePrice),
       stock: variant.stock,
     };
   }
@@ -32,8 +32,8 @@ export function resolveProductPrice(product: IProduct, variantSku?: string | nul
     productName: product.name,
     productImage: product.images[0]?.url ?? '',
     variant: null,
-    mrp: product.mrp,
-    unitPrice: product.salePrice,
+    mrp: Number(product.mrp),
+    unitPrice: Number(product.salePrice),
     stock: product.stock,
   };
 }
@@ -51,7 +51,7 @@ export function computeShipping(subtotal: number, freeShippingThreshold: number,
   return subtotal >= freeShippingThreshold ? 0 : standardShippingFee;
 }
 
-export function applyCoupon(subtotal: number, coupon: ICoupon | null): { discount: number; freeShipping: boolean } {
+export function applyCoupon(subtotal: number, coupon: Coupon | null): { discount: number; freeShipping: boolean } {
   if (!coupon) return { discount: 0, freeShipping: false };
 
   if (coupon.type === 'FREE_SHIPPING') return { discount: 0, freeShipping: true };
@@ -66,7 +66,7 @@ export function applyCoupon(subtotal: number, coupon: ICoupon | null): { discoun
   return { discount: Math.min(discount, subtotal), freeShipping: false };
 }
 
-export function validateCouponEligibility(coupon: ICoupon, subtotal: number): void {
+export function validateCouponEligibility(coupon: Coupon, subtotal: number): void {
   if (!coupon.isActive) throw ApiError.badRequest('This coupon is no longer active');
   if (coupon.expiresAt && coupon.expiresAt.getTime() < Date.now()) throw ApiError.badRequest('This coupon has expired');
   if (coupon.usageLimit !== null && coupon.usedCount >= coupon.usageLimit) {

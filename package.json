@@ -16,6 +16,12 @@
     "build": "npm run build --workspace server && npm run build --workspace client",
     "start": "npm run start --workspace server",
     "seed": "npm run seed --workspace server",
+    "create-admin": "npm run create-admin --workspace server --",
+    "verify:production": "npm run verify:production --workspace server",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspace server",
+    "db:migrate:dev": "npm run db:migrate:dev --workspace server",
+    "migrate:mongo-to-mysql": "npm run migrate:mongo-to-mysql --workspace server --",
+    "migrate:validate": "npm run migrate:validate --workspace server",
     "lint": "npm run lint --workspace server && npm run lint --workspace client",
     "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace client",
     "test": "npm run test --workspace server && npm run test --workspace client"

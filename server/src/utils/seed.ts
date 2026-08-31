@@ -1,16 +1,9 @@
 /* eslint-disable no-console */
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose';
-import { connectDatabase } from '../config/db';
+import { prisma, connectDatabase, disconnectDatabase } from '../config/db';
 import { toSlug } from './slug';
-import { User } from '../models/User';
-import { Category } from '../models/Category';
-import { Product } from '../models/Product';
-import { Review } from '../models/Review';
-import { Coupon } from '../models/Coupon';
-import { BlogPost } from '../models/BlogPost';
-import { SiteSettings } from '../models/SiteSettings';
-import { NewsletterSubscriber } from '../models/NewsletterSubscriber';
+import * as reviewRepository from '../repositories/review.repository';
+import * as settingsRepository from '../repositories/settings.repository';
 import { generateProductImage, generateCategoryImage, generateBannerImage } from './placeholderImage';
 
 const CATEGORY_EMOJI: Record<string, string> = {
@@ -220,13 +213,21 @@ const PRODUCT_SEEDS: ProductSeed[] = [
 ];
 
 const BLOG_SEEDS = [
-  { title: '10 Easy Houseplants for Beginners', category: 'Home Gardening', excerpt: 'Start your indoor garden journey with these low-maintenance houseplants that thrive with minimal care.' },
-  { title: 'How to Choose the Right Potting Mix', category: 'Plant Care', excerpt: 'Not all soil is the same. Learn how to pick the perfect potting mix for your plant type.' },
-  { title: 'A Beginner Guide to Composting at Home', category: 'DIY Gardening', excerpt: 'Turn your kitchen waste into nutrient-rich compost with this simple step-by-step guide.' },
-  { title: 'Understanding NPK: A Fertilizer Primer', category: 'Fertilizers', excerpt: 'Demystify fertilizer labels and learn what nitrogen, phosphorus, and potassium do for your plants.' },
-  { title: 'Seasonal Gardening Tips for Indian Summers', category: 'Gardening Tips', excerpt: 'Keep your garden thriving through the heat with these practical seasonal care tips.' },
-  { title: 'Growing Your Own Kitchen Herb Garden', category: 'Home Gardening', excerpt: 'A compact herb garden on your windowsill can transform your everyday cooking.' },
-];
+  { title: '10 Easy Houseplants for Beginners', category: 'HOME_GARDENING', excerpt: 'Start your indoor garden journey with these low-maintenance houseplants that thrive with minimal care.' },
+  { title: 'How to Choose the Right Potting Mix', category: 'PLANT_CARE', excerpt: 'Not all soil is the same. Learn how to pick the perfect potting mix for your plant type.' },
+  { title: 'A Beginner Guide to Composting at Home', category: 'DIY_GARDENING', excerpt: 'Turn your kitchen waste into nutrient-rich compost with this simple step-by-step guide.' },
+  { title: 'Understanding NPK: A Fertilizer Primer', category: 'FERTILIZERS', excerpt: 'Demystify fertilizer labels and learn what nitrogen, phosphorus, and potassium do for your plants.' },
+  { title: 'Seasonal Gardening Tips for Indian Summers', category: 'GARDENING_TIPS', excerpt: 'Keep your garden thriving through the heat with these practical seasonal care tips.' },
+  { title: 'Growing Your Own Kitchen Herb Garden', category: 'HOME_GARDENING', excerpt: 'A compact herb garden on your windowsill can transform your everyday cooking.' },
+] as const;
+
+const BLOG_CATEGORY_LABEL: Record<string, string> = {
+  GARDENING_TIPS: 'Gardening Tips',
+  HOME_GARDENING: 'Home Gardening',
+  PLANT_CARE: 'Plant Care',
+  FERTILIZERS: 'Fertilizers',
+  DIY_GARDENING: 'DIY Gardening',
+};
 
 const SAMPLE_REVIEW_TEXT = [
   { title: 'Excellent quality!', description: 'The product arrived well packaged and exactly as described. Very happy with the purchase.' },
@@ -237,67 +238,59 @@ const SAMPLE_REVIEW_TEXT = [
 ];
 
 async function seedAdmin() {
-  const existing = await User.findOne({ email: 'admin@greenleaf.example' });
+  const email = 'admin@greenleaf.example';
+  const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return existing;
 
   const passwordHash = await bcrypt.hash('Admin@12345', 12);
-  return User.create({
-    name: 'Green Admin',
-    email: 'admin@greenleaf.example',
-    passwordHash,
-    role: 'SUPER_ADMIN',
-  });
+  return prisma.user.create({ data: { name: 'Green Admin', email, passwordHash, role: 'SUPER_ADMIN' } });
 }
 
 async function seedDemoCustomer() {
-  const existing = await User.findOne({ email: 'customer@greenleaf.example' });
+  const email = 'customer@greenleaf.example';
+  const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) return existing;
 
   const passwordHash = await bcrypt.hash('Customer@12345', 12);
-  return User.create({
-    name: 'Asha Rao',
-    email: 'customer@greenleaf.example',
-    passwordHash,
-    role: 'CUSTOMER',
-  });
+  return prisma.user.create({ data: { name: 'Asha Rao', email, passwordHash, role: 'CUSTOMER' } });
 }
 
-async function seedCategories() {
-  const subcategoryBySlug = new Map<string, mongoose.Types.ObjectId>();
+async function seedCategories(): Promise<Map<string, string>> {
+  const subcategoryBySlug = new Map<string, string>();
   let order = 0;
 
   for (const [parentName, children] of Object.entries(CATEGORY_TREE)) {
     order += 1;
     const parentSlug = toSlug(parentName);
-    const parent = await Category.findOneAndUpdate(
-      { slug: parentSlug },
-      {
+    const parent = await prisma.category.upsert({
+      where: { slug: parentSlug },
+      update: { name: parentName, order, isActive: true, image: generateCategoryImage(parentName, CATEGORY_EMOJI[parentName] ?? '🪴') },
+      create: {
         name: parentName,
         slug: parentSlug,
         order,
         isActive: true,
         image: generateCategoryImage(parentName, CATEGORY_EMOJI[parentName] ?? '🪴'),
       },
-      { upsert: true, new: true }
-    );
+    });
 
     let childOrder = 0;
     for (const childName of children) {
       childOrder += 1;
       const childSlug = toSlug(childName);
-      const child = await Category.findOneAndUpdate(
-        { slug: childSlug },
-        {
+      const child = await prisma.category.upsert({
+        where: { slug: childSlug },
+        update: { name: childName, parentId: parent.id, order: childOrder, isActive: true, image: generateCategoryImage(childName, CATEGORY_EMOJI[childName] ?? '🪴') },
+        create: {
           name: childName,
           slug: childSlug,
-          parent: parent._id,
+          parentId: parent.id,
           order: childOrder,
           isActive: true,
           image: generateCategoryImage(childName, CATEGORY_EMOJI[childName] ?? '🪴'),
         },
-        { upsert: true, new: true }
-      );
-      subcategoryBySlug.set(childSlug, child._id as mongoose.Types.ObjectId);
+      });
+      subcategoryBySlug.set(childSlug, child.id);
     }
   }
 
@@ -305,19 +298,19 @@ async function seedCategories() {
   return subcategoryBySlug;
 }
 
-async function seedProducts(subcategoryBySlug: Map<string, mongoose.Types.ObjectId>) {
-  const createdProducts: mongoose.Types.ObjectId[] = [];
+async function seedProducts(subcategoryBySlug: Map<string, string>): Promise<string[]> {
+  const createdProductIds: string[] = [];
   const usedSkus = new Set<string>();
 
   for (let seedIndex = 0; seedIndex < PRODUCT_SEEDS.length; seedIndex += 1) {
     const seed = PRODUCT_SEEDS[seedIndex];
     const slug = toSlug(seed.name);
     const subSlug = toSlug(seed.subcategory);
-    const subcategory = subcategoryBySlug.get(subSlug);
-    if (!subcategory) continue;
+    const subcategoryId = subcategoryBySlug.get(subSlug);
+    if (!subcategoryId) continue;
 
-    const subcategoryDoc = await Category.findById(subcategory);
-    const category = subcategoryDoc?.parent ?? subcategory;
+    const subcategoryDoc = await prisma.category.findUnique({ where: { id: subcategoryId } });
+    const categoryId = subcategoryDoc?.parentId ?? subcategoryId;
 
     let sku = `GL-${slug.toUpperCase().replace(/-/g, '').slice(0, 10)}`;
     if (usedSkus.has(sku)) sku = `${sku}-${seedIndex}`;
@@ -339,41 +332,73 @@ async function seedProducts(subcategoryBySlug: Map<string, mongoose.Types.Object
       images: [generateProductImage(`${seed.name} (${Object.values(v.attributes).join(', ')})`, emoji, idx)],
     }));
 
-    const product = await Product.findOneAndUpdate(
-      { slug },
-      {
-        name: seed.name,
-        slug,
-        shortDescription: `${seed.name} — a premium gardening essential for healthier, happier plants.`,
-        description: `${seed.name} is carefully selected for Indian gardening conditions. Ideal for both home gardens and balcony gardening, this product helps you grow a thriving, sustainable garden all year round.`,
-        howToUse: 'Follow the recommended dosage/usage instructions on the packaging. For best results, use consistently as part of your regular gardening routine.',
-        sku,
-        brand: 'GreenKart',
-        category,
-        subcategory,
-        images,
-        variants,
-        mrp: seed.mrp,
-        salePrice: seed.salePrice,
-        stock: seed.stock,
-        tags: seed.tags,
-        featured: Boolean(seed.featured),
-        bestSeller: Boolean(seed.bestSeller),
-        newArrival: Boolean(seed.newArrival),
-        seoTitle: seed.name,
-        seoDescription: `Buy ${seed.name} online at the best price. Fast delivery across India.`,
-        status: 'PUBLISHED',
-      },
-      { upsert: true, new: true }
-    );
+    const baseData = {
+      name: seed.name,
+      shortDescription: `${seed.name} — a premium gardening essential for healthier, happier plants.`,
+      description: `${seed.name} is carefully selected for Indian gardening conditions. Ideal for both home gardens and balcony gardening, this product helps you grow a thriving, sustainable garden all year round.`,
+      howToUse: 'Follow the recommended dosage/usage instructions on the packaging. For best results, use consistently as part of your regular gardening routine.',
+      sku,
+      brand: 'GreenKart',
+      categoryId,
+      subcategoryId,
+      mrp: seed.mrp,
+      salePrice: seed.salePrice,
+      stock: seed.stock,
+      featured: Boolean(seed.featured),
+      bestSeller: Boolean(seed.bestSeller),
+      newArrival: Boolean(seed.newArrival),
+      seoTitle: seed.name,
+      seoDescription: `Buy ${seed.name} online at the best price. Fast delivery across India.`,
+      status: 'PUBLISHED' as const,
+    };
 
-    createdProducts.push(product._id as mongoose.Types.ObjectId);
+    const existing = await prisma.product.findUnique({ where: { slug } });
+    const product = existing
+      ? await prisma.product.update({
+          where: { slug },
+          data: {
+            ...baseData,
+            images: { deleteMany: {}, create: images },
+            variants: {
+              deleteMany: {},
+              create: variants.map((v) => ({
+                sku: v.sku,
+                mrp: v.mrp,
+                salePrice: v.salePrice,
+                stock: v.stock,
+                attributes: { create: Object.entries(v.attributes).map(([key, value]) => ({ key, value })) },
+                images: { create: v.images.map((url, sortOrder) => ({ url, sortOrder })) },
+              })),
+            },
+            tags: { deleteMany: {}, create: seed.tags.map((tag) => ({ tag })) },
+          },
+        })
+      : await prisma.product.create({
+          data: {
+            ...baseData,
+            slug,
+            images: { create: images },
+            variants: {
+              create: variants.map((v) => ({
+                sku: v.sku,
+                mrp: v.mrp,
+                salePrice: v.salePrice,
+                stock: v.stock,
+                attributes: { create: Object.entries(v.attributes).map(([key, value]) => ({ key, value })) },
+                images: { create: v.images.map((url, sortOrder) => ({ url, sortOrder })) },
+              })),
+            },
+            tags: { create: seed.tags.map((tag) => ({ tag })) },
+          },
+        });
+
+    createdProductIds.push(product.id);
   }
 
-  return createdProducts;
+  return createdProductIds;
 }
 
-async function seedReviews(productIds: mongoose.Types.ObjectId[], customerId: mongoose.Types.ObjectId, adminId: mongoose.Types.ObjectId) {
+async function seedReviews(productIds: string[], customerId: string, adminId: string) {
   const reviewers = [customerId, adminId];
   let created = 0;
   let index = 0;
@@ -387,32 +412,26 @@ async function seedReviews(productIds: mongoose.Types.ObjectId[], customerId: mo
       const sample = SAMPLE_REVIEW_TEXT[created % SAMPLE_REVIEW_TEXT.length];
       const rating = 4 + (created % 2);
 
-      await Review.findOneAndUpdate(
-        { product: productId, user: reviewer },
-        {
-          product: productId,
-          user: reviewer,
+      await prisma.review.upsert({
+        where: { productId_userId: { productId, userId: reviewer } },
+        update: { rating, title: sample.title, description: sample.description, verifiedPurchase: created % 2 === 0, isApproved: true },
+        create: {
+          productId,
+          userId: reviewer,
           rating,
           title: sample.title,
           description: sample.description,
           verifiedPurchase: created % 2 === 0,
           isApproved: true,
         },
-        { upsert: true }
-      );
+      });
       created += 1;
     }
     index += 1;
   }
 
-  // Recalculate ratings
   for (const productId of productIds) {
-    const stats = await Review.aggregate([
-      { $match: { product: productId, isApproved: true } },
-      { $group: { _id: '$product', avgRating: { $avg: '$rating' }, count: { $sum: 1 } } },
-    ]);
-    const { avgRating = 0, count = 0 } = stats[0] ?? {};
-    await Product.findByIdAndUpdate(productId, { averageRating: avgRating, reviewCount: count });
+    await reviewRepository.recalculateProductRating(productId);
   }
 }
 
@@ -424,36 +443,55 @@ async function seedCoupons() {
   ];
 
   for (const coupon of coupons) {
-    await Coupon.findOneAndUpdate(
-      { code: coupon.code },
-      { ...coupon, expiresAt: null, usedCount: 0, isActive: true },
-      { upsert: true }
-    );
+    await prisma.coupon.upsert({
+      where: { code: coupon.code },
+      update: { ...coupon, expiresAt: null, isActive: true },
+      create: { ...coupon, expiresAt: null, usedCount: 0, isActive: true },
+    });
   }
 }
 
-async function seedBlogPosts(authorId: mongoose.Types.ObjectId) {
+async function seedBlogPosts(authorId: string) {
   for (const post of BLOG_SEEDS) {
     const slug = toSlug(post.title);
-    await BlogPost.findOneAndUpdate(
-      { slug },
-      {
+    const categoryLabel = BLOG_CATEGORY_LABEL[post.category] ?? post.category;
+    await prisma.blogPost.upsert({
+      where: { slug },
+      update: {
+        title: post.title,
+        category: post.category,
+        excerpt: post.excerpt,
+        content: `${post.excerpt}\n\nGardening is a rewarding journey that connects us with nature. In this article, we cover practical, actionable tips you can apply right away, whether you are a complete beginner or a seasoned green thumb. Consistency, the right tools, and quality inputs make all the difference in the long run.`,
+        coverImage: generateBannerImage(post.title, BLOG_CATEGORY_EMOJI[categoryLabel] ?? '🌱', 1200, 630),
+        authorId,
+        isPublished: true,
+        publishedAt: new Date(),
+      },
+      create: {
         title: post.title,
         slug,
         category: post.category,
         excerpt: post.excerpt,
         content: `${post.excerpt}\n\nGardening is a rewarding journey that connects us with nature. In this article, we cover practical, actionable tips you can apply right away, whether you are a complete beginner or a seasoned green thumb. Consistency, the right tools, and quality inputs make all the difference in the long run.`,
-        coverImage: generateBannerImage(post.title, BLOG_CATEGORY_EMOJI[post.category] ?? '🌱', 1200, 630),
-        author: authorId,
+        coverImage: generateBannerImage(post.title, BLOG_CATEGORY_EMOJI[categoryLabel] ?? '🌱', 1200, 630),
+        authorId,
         isPublished: true,
         publishedAt: new Date(),
       },
-      { upsert: true }
-    );
+    });
   }
 }
 
 async function run() {
+  // This seed creates well-known demo credentials (admin@greenleaf.example /
+  // Admin@12345) and must never run against a real deployment. Production
+  // admin accounts are created with `npm run create-admin` instead (see
+  // server/src/utils/createAdmin.ts), which never uses a fixed credential.
+  if (process.env.NODE_ENV === 'production') {
+    console.error('[seed] Refusing to run the demo seed with NODE_ENV=production. Use `npm run create-admin` instead.');
+    process.exit(1);
+  }
+
   await connectDatabase();
   console.log('[seed] Connected. Seeding database...');
 
@@ -467,26 +505,26 @@ async function run() {
   const productIds = await seedProducts(subcategoryMap);
   console.log(`[seed] Seeded ${productIds.length} products`);
 
-  await seedReviews(productIds, customer._id as mongoose.Types.ObjectId, admin._id as mongoose.Types.ObjectId);
+  await seedReviews(productIds, customer.id, admin.id);
   console.log('[seed] Seeded reviews');
 
   await seedCoupons();
   console.log('[seed] Seeded coupons');
 
-  await seedBlogPosts(admin._id as mongoose.Types.ObjectId);
+  await seedBlogPosts(admin.id);
   console.log('[seed] Seeded blog posts');
 
-  await SiteSettings.findOneAndUpdate({ key: 'default' }, { key: 'default' }, { upsert: true });
-  await NewsletterSubscriber.findOneAndUpdate(
-    { email: 'newsletter-demo@greenleaf.example' },
-    { email: 'newsletter-demo@greenleaf.example', isActive: true },
-    { upsert: true }
-  );
+  await settingsRepository.getSettings();
+  await prisma.newsletterSubscriber.upsert({
+    where: { email: 'newsletter-demo@greenleaf.example' },
+    update: { isActive: true },
+    create: { email: 'newsletter-demo@greenleaf.example', isActive: true },
+  });
 
   console.log('[seed] Done. Demo admin login: admin@greenleaf.example / Admin@12345');
   console.log('[seed] Demo customer login: customer@greenleaf.example / Customer@12345');
 
-  await mongoose.disconnect();
+  await disconnectDatabase();
   process.exit(0);
 }
 

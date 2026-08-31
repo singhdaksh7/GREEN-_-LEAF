@@ -106,7 +106,7 @@ model Category {
   name        String
   slug        String   @unique
   description String?  @db.Text
-  image       String?
+  image       String?  @db.Text
   parentId    String?
   order       Int      @default(0)
   isActive    Boolean  @default(true)
@@ -174,7 +174,7 @@ model Product {
 model ProductImage {
   id        String   @id @default(uuid())
   productId String
-  url       String
+  url       String   @db.Text
   key       String   @default("")
   alt       String   @default("")
   isPrimary Boolean  @default(false)
@@ -214,7 +214,7 @@ model ProductVariant {
 model VariantImage {
   id        String @id @default(uuid())
   variantId String
-  url       String
+  url       String @db.Text
   sortOrder Int    @default(0)
 
   variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
@@ -457,7 +457,7 @@ model OrderItem {
   productId    String?
   variantId    String?
   productName  String
-  productImage String
+  productImage String  @db.Text
   sku          String
   // Snapshot of the selected variant's attributes at order time
   // (Record<string,string> | null) — arbitrary shape, not queried
@@ -555,7 +555,7 @@ model PaymentIntentLine {
   variantId       String?
   variantSku      String?
   name            String
-  image           String
+  image           String  @db.Text
   variant         Json?
   quantity        Int
   unitPrice       Decimal @db.Decimal(10, 2)
@@ -596,7 +596,7 @@ model BlogPost {
   category    BlogCategory
   excerpt     String       @db.Text
   content     String       @db.LongText
-  coverImage  String
+  coverImage  String       @db.Text
   authorId    String?
   isPublished Boolean      @default(false)
   publishedAt DateTime?

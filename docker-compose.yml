@@ -14,7 +14,7 @@ services:
       - green-leaf-mongo-data:/data/db
 
   # Local dev + test database. Production MySQL is provisioned separately on
-  # BigRock — this container is never used in production.
+  # Hostinger — this container is never used in production.
   mysql:
     image: mysql:8
     container_name: green-leaf-mysql

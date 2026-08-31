@@ -1,14 +1,14 @@
-import mongoose from 'mongoose';
-import { Order, IOrder } from '../models/Order';
-import { PaymentIntent, IPaymentIntent } from '../models/PaymentIntent';
-import { Product } from '../models/Product';
-import { Coupon } from '../models/Coupon';
+import { Prisma, PaymentIntent, PaymentIntentLine, Order } from '@prisma/client';
+import { prisma } from '../config/db';
 import { ApiError } from '../utils/ApiError';
 import { env } from '../config/env';
 import { getRazorpayClient, isRazorpayConfigured, toPaise, timingSafeEqualHex, computeHmacSha256Hex } from '../utils/razorpay';
-import * as cartService from './cart.service';
-import { applyCoupon, validateCouponEligibility } from './pricing.service';
-import { ShippingAddressInput } from './order.service';
+import * as cartRepository from './cart.repository';
+import * as couponRepository from './coupon.repository';
+import { decrementStockForLines, reserveCoupon } from './commerce-transaction.helpers';
+import { applyCoupon, validateCouponEligibility } from '../services/pricing.service';
+import { generateOrderNumber } from '../utils/orderNumber';
+import { ShippingAddressInput } from './order.repository';
 import type { Payments } from 'razorpay/dist/types/payments';
 
 export interface RazorpayOrderInitData {
@@ -27,13 +27,20 @@ export interface RazorpayOrderInitData {
 const STALE_PROCESSING_MS = 5 * 60 * 1000;
 
 type RazorpayPaymentEntity = Payments.RazorpayPayment;
-
 type RazorpayCaptureCheck = { captured: true } | { captured: false; status: string };
+type IntentWithLines = PaymentIntent & { lines: PaymentIntentLine[] };
 
-function generateOrderNumber(): string {
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `GL${timestamp}${random}`;
+function shippingAddressData(address: ShippingAddressInput) {
+  return {
+    shippingFullName: address.fullName,
+    shippingPhone: address.phone,
+    shippingEmail: address.email,
+    shippingAddressLine: address.addressLine,
+    shippingLocality: address.locality,
+    shippingCity: address.city,
+    shippingState: address.state,
+    shippingPincode: address.pincode,
+  };
 }
 
 export async function createRazorpayOrder(
@@ -45,10 +52,10 @@ export async function createRazorpayOrder(
   // This makes the disabled mode an intentional, safe deployment state.
   if (!isRazorpayConfigured()) throw ApiError.serviceUnavailable('Online payments are not available yet');
 
-  const cart = await cartService.getOrCreateCart(userId);
+  const cart = await cartRepository.getOrCreateCart(userId);
   if (cart.items.length === 0) throw ApiError.badRequest('Your cart is empty');
 
-  const priced = await cartService.priceCart(cart);
+  const priced = await cartRepository.priceCart(cart);
 
   const outOfStock = priced.lines.filter((line) => !line.inStock);
   if (outOfStock.length > 0) {
@@ -60,7 +67,7 @@ export async function createRazorpayOrder(
   let coupon = null;
 
   if (couponCode) {
-    coupon = await Coupon.findOne({ code: couponCode.toUpperCase() });
+    coupon = await couponRepository.findByCode(couponCode);
     if (!coupon) throw ApiError.badRequest('Invalid coupon code');
     validateCouponEligibility(coupon, priced.subtotal);
     const applied = applyCoupon(priced.subtotal, coupon);
@@ -86,30 +93,34 @@ export async function createRazorpayOrder(
     notes: { userId },
   });
 
-  await PaymentIntent.create({
-    user: userId,
-    razorpayOrderId: razorpayOrder.id,
-    amount: amountPaise,
-    currency: 'INR',
-    status: 'CREATED',
-    shippingAddress,
-    couponCode: coupon?.code ?? null,
-    lines: priced.lines.map((line) => ({
-      productId: line.productId,
-      variantSku: line.variantSku,
-      name: line.name,
-      image: line.image,
-      variant: line.variant,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      totalPrice: line.totalPrice,
-    })),
-    subtotal: priced.subtotal,
-    discount,
-    shipping,
-    tax,
-    grandTotal,
-    order: null,
+  await prisma.paymentIntent.create({
+    data: {
+      userId,
+      razorpayOrderId: razorpayOrder.id,
+      amount: amountPaise,
+      currency: 'INR',
+      status: 'CREATED',
+      ...shippingAddressData(shippingAddress),
+      couponCode: coupon?.code ?? null,
+      subtotal: priced.subtotal,
+      discount,
+      shipping,
+      tax,
+      grandTotal,
+      lines: {
+        create: priced.lines.map((line) => ({
+          productId: line.productId,
+          variantId: line.variantId,
+          variantSku: line.variantSku,
+          name: line.name,
+          image: line.image,
+          variant: line.variant ?? Prisma.JsonNull,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          totalPrice: line.totalPrice,
+        })),
+      },
+    },
   });
 
   return {
@@ -130,7 +141,7 @@ export async function createRazorpayOrder(
 // payloads don't need this extra round-trip: their entity fields are
 // already covered by the webhook HMAC signature over the raw body.
 async function fetchAndValidateRazorpayPayment(
-  intent: IPaymentIntent,
+  intent: PaymentIntent,
   razorpayPaymentId: string
 ): Promise<RazorpayCaptureCheck> {
   const client = getRazorpayClient();
@@ -140,7 +151,7 @@ async function fetchAndValidateRazorpayPayment(
     payment = await client.payments.fetch(razorpayPaymentId);
   } catch (err) {
     console.error('Failed to fetch payment status from Razorpay', {
-      paymentIntentId: intent._id,
+      paymentIntentId: intent.id,
       razorpayPaymentId,
       error: err instanceof Error ? err.message : err,
     });
@@ -170,9 +181,47 @@ async function fetchAndValidateRazorpayPayment(
   throw ApiError.badRequest(`Payment verification failed: unexpected payment status "${payment.status}"`);
 }
 
-async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: string): Promise<IOrder> {
-  if (intent.status === 'PAID' && intent.order) {
-    const existing = await Order.findById(intent.order);
+async function claimIntentForFinalization(intentId: string, razorpayPaymentId: string): Promise<IntentWithLines> {
+  const claimAttempt = await prisma.paymentIntent.updateMany({
+    where: { id: intentId, status: 'CREATED' },
+    data: { status: 'PROCESSING', razorpayPaymentId, processingStartedAt: new Date(), fencingToken: { increment: 1 } },
+  });
+
+  if (claimAttempt.count === 1) {
+    return prisma.paymentIntent.findUniqueOrThrow({ where: { id: intentId }, include: { lines: true } });
+  }
+
+  const current = await prisma.paymentIntent.findUnique({ where: { id: intentId }, include: { lines: true } });
+  if (!current) throw ApiError.notFound('Payment session not found');
+
+  if (current.status === 'PROCESSING' && current.processingStartedAt) {
+    const isStale = current.processingStartedAt.getTime() <= Date.now() - STALE_PROCESSING_MS;
+    if (isStale) {
+      // The previous claimant almost certainly crashed before its
+      // transaction ever ran (e.g. the process died between the claim above
+      // and the transaction starting), so nothing was mutated and it's safe
+      // to reclaim. Matching the exact prior fencingToken makes the reclaim
+      // itself a single-winner atomic operation: if two reconciliation calls
+      // race to reclaim the same stale intent, only the first write matches
+      // — the second sees an already-incremented fencingToken and falls
+      // through to the conflict below instead of reclaiming twice.
+      const reclaim = await prisma.paymentIntent.updateMany({
+        where: { id: intentId, status: 'PROCESSING', fencingToken: current.fencingToken },
+        data: { razorpayPaymentId, processingStartedAt: new Date(), fencingToken: { increment: 1 } },
+      });
+      if (reclaim.count === 1) {
+        return prisma.paymentIntent.findUniqueOrThrow({ where: { id: intentId }, include: { lines: true } });
+      }
+    }
+  }
+
+  if (current.status === 'PROCESSING') throw ApiError.conflict('This payment is already being processed');
+  throw ApiError.badRequest('This payment could not be finalized');
+}
+
+async function finalizePaymentIntent(intent: PaymentIntent, razorpayPaymentId: string): Promise<Order> {
+  if (intent.status === 'PAID' && intent.orderId) {
+    const existing = await prisma.order.findUnique({ where: { id: intent.orderId } });
     if (existing) return existing;
   }
 
@@ -189,142 +238,94 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
   // Atomic single-winner claim: only the first caller to see status CREATED
   // transitions it to PROCESSING. This guards double-click, duplicate
   // verification requests, and a webhook racing the frontend callback. It
-  // deliberately runs outside the transaction below: single-document writes
-  // are already atomic, and keeping the lock separate avoids write-conflict
-  // retries between the two callers racing for it.
-  let claimed = await PaymentIntent.findOneAndUpdate(
-    { _id: intent._id, status: 'CREATED' },
-    { $set: { status: 'PROCESSING', razorpayPaymentId, processingStartedAt: new Date() } },
-    { new: true }
-  );
+  // deliberately runs outside the transaction below: single-row conditional
+  // updates are already atomic, and keeping the lock separate avoids
+  // write-conflict retries between the two callers racing for it.
+  const claimed = await claimIntentForFinalization(intent.id, razorpayPaymentId);
 
-  if (!claimed) {
-    const current = await PaymentIntent.findById(intent._id);
-    if (current?.status === 'PAID' && current.order) {
-      const existing = await Order.findById(current.order);
-      if (existing) return existing;
-    }
-
-    if (current?.status === 'PROCESSING' && current.processingStartedAt) {
-      const isStale = current.processingStartedAt.getTime() <= Date.now() - STALE_PROCESSING_MS;
-      if (isStale) {
-        // The previous claimant almost certainly crashed before its
-        // transaction ever ran (e.g. the process died between the claim
-        // above and session.withTransaction starting), so nothing was
-        // mutated and it's safe to reclaim. Matching the exact prior
-        // processingStartedAt makes the reclaim itself a single-winner
-        // atomic operation: if two reconciliation calls race to reclaim the
-        // same stale intent, only the first write matches — the second sees
-        // an already-refreshed processingStartedAt and falls through to the
-        // conflict below instead of reclaiming twice.
-        claimed = await PaymentIntent.findOneAndUpdate(
-          { _id: intent._id, status: 'PROCESSING', processingStartedAt: current.processingStartedAt },
-          { $set: { razorpayPaymentId, processingStartedAt: new Date() } },
-          { new: true }
-        );
-      }
-    }
-
-    if (!claimed) {
-      if (current?.status === 'PROCESSING') {
-        throw ApiError.conflict('This payment is already being processed');
-      }
-      throw ApiError.badRequest('This payment could not be finalized');
-    }
+  if (claimed.status === 'PAID' && claimed.orderId) {
+    const existing = await prisma.order.findUnique({ where: { id: claimed.orderId } });
+    if (existing) return existing;
   }
 
   // Fencing token: if a stale reclaim happens to race with the original
   // (not actually dead) worker resuming, both would otherwise commit
   // independent transactions against the same claim. Requiring the intent's
-  // processingStartedAt to still equal what THIS caller claimed, checked as
-  // part of the same transaction that marks it PAID, means whichever caller
-  // loses the race has its transaction aborted (rolling back its own stock
+  // fencingToken to still equal what THIS caller claimed, checked as part of
+  // the same transaction that marks it PAID, means whichever caller loses
+  // the race has its transaction aborted (rolling back its own stock
   // decrement/coupon reservation/order) instead of silently double-applying.
-  const claimToken = claimed.processingStartedAt;
+  const claimToken = claimed.fencingToken;
 
   // From this point on, Razorpay has captured the payment and we hold the
   // sole claim on it. Stock decrement, coupon reservation, Order creation,
-  // and the intent's own PAID transition all happen in one MongoDB
-  // transaction so they commit or roll back together — no partial stock
-  // decrement can survive a later coupon or order-creation failure. The
-  // external Razorpay API call has already completed by this point and is
-  // intentionally never inside this transaction.
-  const session = await mongoose.startSession();
+  // and the intent's own PAID transition all happen in one transaction so
+  // they commit or roll back together — no partial stock decrement can
+  // survive a later coupon or order-creation failure. The external Razorpay
+  // API call has already completed by this point and is intentionally never
+  // inside this transaction.
   try {
-    const order = await session.withTransaction(async () => {
-      for (const line of claimed.lines) {
-        if (line.variantSku) {
-          const product = await Product.findOneAndUpdate(
-            { _id: line.productId, variants: { $elemMatch: { sku: line.variantSku, stock: { $gte: line.quantity } } } },
-            { $inc: { 'variants.$.stock': -line.quantity } },
-            { session }
-          );
-          if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
-        } else {
-          const product = await Product.findOneAndUpdate(
-            { _id: line.productId, stock: { $gte: line.quantity } },
-            { $inc: { stock: -line.quantity } },
-            { session }
-          );
-          if (!product) throw ApiError.badRequest(`Insufficient stock for ${line.name}`);
-        }
-      }
+    const order = await prisma.$transaction(async (tx) => {
+      const pricedLines = claimed.lines.map((line) => ({
+        productId: line.productId,
+        variantId: line.variantId,
+        quantity: line.quantity,
+        name: line.name,
+      }));
+      await decrementStockForLines(tx, pricedLines);
 
-      if (claimed.couponCode) {
-        const reserved = await Coupon.findOneAndUpdate(
-          {
-            code: claimed.couponCode,
-            isActive: true,
-            $or: [{ usageLimit: null }, { $expr: { $lt: ['$usedCount', '$usageLimit'] } }],
-          },
-          { $inc: { usedCount: 1 } },
-          { session }
-        );
-        if (!reserved) throw ApiError.badRequest('This coupon has just reached its usage limit');
-      }
+      if (claimed.couponCode) await reserveCoupon(tx, claimed.couponCode);
 
-      const [created] = await Order.create(
-        [
-          {
-            orderNumber: generateOrderNumber(),
-            user: claimed.user,
-            items: claimed.lines.map((line) => ({
-              product: line.productId,
+      const created = await tx.order.create({
+        data: {
+          orderNumber: generateOrderNumber(),
+          userId: claimed.userId,
+          shippingFullName: claimed.shippingFullName,
+          shippingPhone: claimed.shippingPhone,
+          shippingEmail: claimed.shippingEmail,
+          shippingAddressLine: claimed.shippingAddressLine,
+          shippingLocality: claimed.shippingLocality,
+          shippingCity: claimed.shippingCity,
+          shippingState: claimed.shippingState,
+          shippingPincode: claimed.shippingPincode,
+          subtotal: claimed.subtotal,
+          discount: claimed.discount,
+          shipping: claimed.shipping,
+          tax: claimed.tax,
+          grandTotal: claimed.grandTotal,
+          couponCode: claimed.couponCode,
+          paymentMethod: 'ONLINE',
+          paymentStatus: 'PAID',
+          razorpayOrderId: claimed.razorpayOrderId,
+          razorpayPaymentId,
+          orderStatus: 'CONFIRMED',
+          items: {
+            create: claimed.lines.map((line) => ({
+              productId: line.productId,
+              variantId: line.variantId,
               productName: line.name,
               productImage: line.image,
               sku: line.variantSku ?? line.name,
-              variant: line.variant,
+              variant: line.variant ?? Prisma.JsonNull,
               quantity: line.quantity,
               unitPrice: line.unitPrice,
               totalPrice: line.totalPrice,
             })),
-            shippingAddress: claimed.shippingAddress,
-            subtotal: claimed.subtotal,
-            discount: claimed.discount,
-            shipping: claimed.shipping,
-            tax: claimed.tax,
-            grandTotal: claimed.grandTotal,
-            couponCode: claimed.couponCode,
-            paymentMethod: 'ONLINE',
-            paymentStatus: 'PAID',
-            razorpayOrderId: claimed.razorpayOrderId,
-            razorpayPaymentId,
-            orderStatus: 'CONFIRMED',
-            statusHistory: [
+          },
+          statusHistory: {
+            create: [
               { status: 'PENDING', changedAt: claimed.createdAt },
-              { status: 'CONFIRMED', changedAt: new Date() },
+              { status: 'CONFIRMED' },
             ],
           },
-        ],
-        { session }
-      );
+        },
+      });
 
-      const fenced = await PaymentIntent.updateOne(
-        { _id: claimed._id, processingStartedAt: claimToken },
-        { $set: { status: 'PAID', order: created._id } },
-        { session }
-      );
-      if (fenced.matchedCount === 0) {
+      const fenced = await tx.paymentIntent.updateMany({
+        where: { id: claimed.id, fencingToken: claimToken },
+        data: { status: 'PAID', orderId: created.id },
+      });
+      if (fenced.count === 0) {
         throw ApiError.conflict(
           'This payment claim was superseded by a stale-recovery reclaim; aborting to avoid duplicate fulfillment'
         );
@@ -337,32 +338,32 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
     // order has already committed above, so a failure here must never be
     // treated as a fulfillment failure.
     try {
-      await cartService.clearCart(claimed.user.toString());
+      await cartRepository.clearCart(claimed.userId);
     } catch (clearCartErr) {
       console.error('Failed to clear cart after a successful Razorpay order', {
-        paymentIntentId: claimed._id,
+        paymentIntentId: claimed.id,
         error: clearCartErr,
       });
     }
 
-    return order as IOrder;
+    return order;
   } catch (err) {
     // The transaction aborted (business rule, e.g. insufficient stock, or an
     // infrastructure failure) after Razorpay had already captured the
-    // payment. Every stock decrement, coupon reservation, and order
-    // creation attempted inside the transaction has been rolled back
-    // automatically — nothing partial can remain. What must never happen is
-    // silently losing track of the money: flag it for manual refund.
+    // payment. Every stock decrement, coupon reservation, and order creation
+    // attempted inside the transaction has been rolled back automatically —
+    // nothing partial can remain. What must never happen is silently losing
+    // track of the money: flag it for manual refund.
     const failureReason = err instanceof Error ? err.message : 'Unknown error';
     // Fenced the same way as the success path: if this claim was superseded
     // by a fresher reclaim before we got here, don't clobber whatever state
     // that reclaim (or its own success/failure) has since written.
-    await PaymentIntent.updateOne(
-      { _id: claimed._id, processingStartedAt: claimToken, status: 'PROCESSING' },
-      { $set: { status: 'REQUIRES_REFUND', failureReason } }
-    );
+    await prisma.paymentIntent.updateMany({
+      where: { id: claimed.id, fencingToken: claimToken, status: 'PROCESSING' },
+      data: { status: 'REQUIRES_REFUND', failureReason },
+    });
     console.error('Razorpay payment captured but GreenKart order fulfillment failed — REQUIRES_REFUND', {
-      paymentIntentId: claimed._id,
+      paymentIntentId: claimed.id,
       razorpayOrderId: claimed.razorpayOrderId,
       razorpayPaymentId,
       error: failureReason,
@@ -370,8 +371,6 @@ async function finalizePaymentIntent(intent: IPaymentIntent, razorpayPaymentId: 
     throw ApiError.internal(
       'Your payment was received but we could not complete your order automatically. Our team has been notified and will contact you.'
     );
-  } finally {
-    await session.endSession();
   }
 }
 
@@ -381,7 +380,7 @@ export interface VerifyPaymentInput {
   razorpay_signature: string;
 }
 
-export type VerifyPaymentResult = { status: 'CONFIRMED'; order: IOrder } | { status: 'PENDING' };
+export type VerifyPaymentResult = { status: 'CONFIRMED'; order: Order } | { status: 'PENDING' };
 
 export async function verifyAndFinalizePayment(userId: string, input: VerifyPaymentInput): Promise<VerifyPaymentResult> {
   if (!isRazorpayConfigured()) throw ApiError.serviceUnavailable('Online payments are not available yet');
@@ -394,11 +393,11 @@ export async function verifyAndFinalizePayment(userId: string, input: VerifyPaym
   // this lookup, but anchoring the HMAC input to server-loaded state (and
   // asserting the match explicitly) means a future refactor that starts
   // deriving the intent some other way — e.g. from a client-supplied intent
-  // id instead of the order id — cannot silently start trusting an
-  // unbound, arbitrary client order id for the signature calculation.
-  const intent = await PaymentIntent.findOne({ razorpayOrderId: razorpay_order_id });
+  // id instead of the order id — cannot silently start trusting an unbound,
+  // arbitrary client order id for the signature calculation.
+  const intent = await prisma.paymentIntent.findUnique({ where: { razorpayOrderId: razorpay_order_id } });
   if (!intent) throw ApiError.notFound('Payment session not found');
-  if (intent.user.toString() !== userId) throw ApiError.forbidden('This payment does not belong to you');
+  if (intent.userId !== userId) throw ApiError.forbidden('This payment does not belong to you');
   if (intent.razorpayOrderId !== razorpay_order_id) {
     throw ApiError.badRequest('Payment verification failed: order ID mismatch');
   }
@@ -410,8 +409,8 @@ export async function verifyAndFinalizePayment(userId: string, input: VerifyPaym
 
   // Already finalized (duplicate verify, or the webhook beat us to it) —
   // return the existing order without spending a Razorpay API call on it.
-  if (intent.status === 'PAID' && intent.order) {
-    const existing = await Order.findById(intent.order);
+  if (intent.status === 'PAID' && intent.orderId) {
+    const existing = await prisma.order.findUnique({ where: { id: intent.orderId } });
     if (existing) return { status: 'CONFIRMED', order: existing };
   }
 
@@ -458,7 +457,7 @@ export async function processWebhookEvent(payload: RazorpayWebhookPayload): Prom
     const razorpayPaymentId = paymentEntity?.id;
     if (!razorpayOrderId || !razorpayPaymentId) return;
 
-    const intent = await PaymentIntent.findOne({ razorpayOrderId });
+    const intent = await prisma.paymentIntent.findUnique({ where: { razorpayOrderId } });
     if (!intent) return;
     // Already in a terminal state: PAID means this event (or the frontend's
     // own verification) already finalized it; FAILED/REQUIRES_REFUND mean
@@ -484,9 +483,9 @@ export async function processWebhookEvent(payload: RazorpayWebhookPayload): Prom
   if (event === 'payment.failed') {
     const razorpayOrderId = payload.payload?.payment?.entity?.order_id;
     if (!razorpayOrderId) return;
-    await PaymentIntent.updateOne(
-      { razorpayOrderId, status: 'CREATED' },
-      { $set: { status: 'FAILED', failureReason: 'Razorpay reported payment.failed' } }
-    );
+    await prisma.paymentIntent.updateMany({
+      where: { razorpayOrderId, status: 'CREATED' },
+      data: { status: 'FAILED', failureReason: 'Razorpay reported payment.failed' },
+    });
   }
 }

@@ -17,7 +17,7 @@ const PRODUCT_INCLUDE = {
   tags: true,
 } satisfies Prisma.ProductInclude;
 
-type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof PRODUCT_INCLUDE }>;
+export type ProductWithRelations = Prisma.ProductGetPayload<{ include: typeof PRODUCT_INCLUDE }>;
 
 interface ClientVariantInput {
   sku: string;
@@ -426,6 +426,23 @@ function applyInMemorySort(products: ProductWithRelations[], sortKey: string): P
   };
   const cmp = comparators[sortKey] ?? comparators.featured;
   return products.slice().sort(cmp);
+}
+
+export function suggestProducts(q: string, limit = 6) {
+  return prisma.product.findMany({
+    where: {
+      status: 'PUBLISHED',
+      OR: [{ name: { contains: q } }, { brand: { contains: q } }, { tags: { some: { tag: { contains: q } } } }],
+    },
+    select: {
+      name: true,
+      slug: true,
+      salePrice: true,
+      mrp: true,
+      images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+    },
+    take: limit,
+  });
 }
 
 export async function getRelatedProducts(product: Pick<Product, 'id' | 'categoryId'>, limit = 8) {
