@@ -3,7 +3,8 @@ import { asyncHandler } from '../utils/asyncHandler';
 import { sendCreated, sendSuccess } from '../utils/ApiResponse';
 import { ApiError } from '../utils/ApiError';
 import { env } from '../config/env';
-import { User, IUser } from '../models/User';
+import { User } from '@prisma/client';
+import * as userRepository from '../repositories/user.repository';
 import {
   registerUser,
   loginUser,
@@ -26,9 +27,9 @@ function setAuthCookies(res: Response, accessToken: string, refreshToken: string
   res.cookie('refreshToken', refreshToken, { ...cookieOptions, maxAge: 7 * 24 * 60 * 60 * 1000 });
 }
 
-function serializeUser(user: IUser) {
+function serializeUser(user: User) {
   return {
-    id: user._id?.toString(),
+    id: user.id,
     name: user.name,
     email: user.email,
     role: user.role,
@@ -69,7 +70,7 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const me = asyncHandler(async (req: Request, res: Response) => {
-  const user = await User.findById(req.user!.id);
+  const user = await userRepository.findUserById(req.user!.id);
   if (!user) throw ApiError.notFound('User not found');
   sendSuccess(res, serializeUser(user), 'Current user fetched');
 });

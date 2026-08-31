@@ -1,20 +1,22 @@
 import slugify from 'slugify';
-import { Model } from 'mongoose';
 
 export function toSlug(text: string): string {
   return slugify(text, { lower: true, strict: true });
 }
 
-export async function generateUniqueSlug<T>(model: Model<T>, text: string, excludeId?: string): Promise<string> {
+/**
+ * `slugExists` should resolve `true` if the given slug is already taken by
+ * some OTHER row (the caller is responsible for excluding the row currently
+ * being updated, if any).
+ */
+export async function generateUniqueSlug(text: string, slugExists: (slug: string) => Promise<boolean>): Promise<string> {
   const base = toSlug(text);
   let slug = base;
   let counter = 1;
 
   for (;;) {
-    const query: Record<string, unknown> = { slug };
-    if (excludeId) query._id = { $ne: excludeId };
-    const existing = await model.findOne(query);
-    if (!existing) return slug;
+    const exists = await slugExists(slug);
+    if (!exists) return slug;
     counter += 1;
     slug = `${base}-${counter}`;
   }

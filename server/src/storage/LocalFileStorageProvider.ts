@@ -5,7 +5,7 @@ import { StorageProvider, UploadOptions } from './StorageProvider';
 
 /**
  * Stores files on the local, persistent filesystem under `env.uploadDir`.
- * This is the target implementation for BigRock (or any normal Linux host
+ * This is the target implementation for Hostinger (or any normal Linux host
  * with a persistent disk) — no cloud credentials, no ephemeral-storage
  * assumptions. Keys are always server-generated (see uploads.controller.ts),
  * but resolvedPath() still guards against escaping the upload root as

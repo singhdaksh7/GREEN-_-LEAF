@@ -5,9 +5,8 @@ import helmet from 'helmet';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
-import mongoSanitize from 'express-mongo-sanitize';
-import mongoose from 'mongoose';
 import { env } from './config/env';
+import { prisma } from './config/db';
 import apiRoutes from './routes';
 import { notFoundHandler, errorHandler } from './middleware/error-handler';
 import { apiRateLimiter } from './middleware/rate-limit';
@@ -19,12 +18,13 @@ const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
 export function createApp(): Express {
   const app = express();
 
+  // Number of reverse-proxy hops to trust for X-Forwarded-* headers
+  // (secure-cookie detection, rate-limiting IP, req.protocol/req.ip).
+  // A managed Node host's reverse proxy (e.g. Hostinger) is typically a
+  // single hop in front of Node — configurable via TRUST_PROXY_HOPS for
+  // any hosting topology that differs (e.g. an extra CDN/load balancer).
   if (env.isProd) {
-    // Render's onrender.com domains sit behind Cloudflare in front of Render's own
-    // reverse proxy, so two hops must be trusted to recover the real client IP for
-    // rate limiting; trusting only 1 hop resolves to Cloudflare's rotating edge IP
-    // and makes express-rate-limit bucket requests inconsistently.
-    app.set('trust proxy', 2);
+    app.set('trust proxy', env.trustProxyHops);
   }
 
   app.use(helmet());
@@ -40,7 +40,6 @@ export function createApp(): Express {
   app.use(express.json({ limit: '2mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
-  app.use(mongoSanitize());
 
   if (!env.isProd) {
     app.use(morgan('dev'));
@@ -50,8 +49,14 @@ export function createApp(): Express {
     res.status(200).json({ success: true, message: 'OK', uptime: process.uptime() });
   });
 
-  app.get('/api/health', (_req, res) => {
-    const dbConnected = mongoose.connection.readyState === 1;
+  app.get('/api/health', async (_req, res) => {
+    let dbConnected = false;
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      dbConnected = true;
+    } catch {
+      dbConnected = false;
+    }
     res.status(200).json({
       success: true,
       status: 'ok',
@@ -63,8 +68,8 @@ export function createApp(): Express {
   app.get('/sitemap.xml', sitemapXml);
 
   // Serves uploaded product images from the configured persistent directory
-  // (UPLOAD_DIR). On hosts where Apache/cPanel is configured to serve this
-  // directory directly, this route is redundant but harmless.
+  // (UPLOAD_DIR). If the hosting platform is ever configured to serve this
+  // directory directly at the edge, this route is redundant but harmless.
   app.use(env.uploadUrlPath, express.static(env.uploadDir));
 
   app.use('/api', apiRateLimiter, apiRoutes);

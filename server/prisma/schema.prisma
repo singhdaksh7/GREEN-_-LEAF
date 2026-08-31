@@ -1,0 +1,658 @@
+// GreenKart relational schema (MySQL, via Prisma).
+//
+// Design notes:
+// - Every model uses a UUID string primary key (`id String @id @default(uuid())`)
+//   rather than autoincrement integers. This matches the stable-ID preference
+//   for the future Mongo->MySQL migration tool (server/scripts/migrate-mongo-to-mysql),
+//   which needs to assign new ids while preserving every relationship via an
+//   in-memory id map, without worrying about autoincrement sequence collisions.
+// - Public-facing identifiers are UNCHANGED from the Mongo-backed app: products
+//   and categories are addressed by `slug`, orders by `orderNumber`, blog posts
+//   by `slug`. None of these were ever raw Mongo ObjectIds in a URL, so no
+//   public URL breaks as part of this migration.
+// - `Product.status` (DRAFT/PUBLISHED/ARCHIVED) is the ONLY persisted
+//   visibility field. The old Mongo model additionally carried a redundant
+//   `isActive` boolean kept in sync via hooks; that redundancy is intentionally
+//   NOT carried over here. Any API response that still needs an `isActive`
+//   field for frontend backward-compatibility computes it at the service layer
+//   as `status === 'PUBLISHED'` — never stored.
+// - Every conditional/optimistic-locking update pattern from the Mongoose
+//   version (stock decrement, coupon claim, payment-intent fencing) is
+//   implemented in the repository layer via parameterized raw UPDATE
+//   statements inside `prisma.$transaction`, checked for affected-row count.
+//   See server/src/repositories/*.repository.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(CUSTOMER)
+  isActive     Boolean  @default(true)
+  // Incremented on logout-everywhere / password change to invalidate all
+  // previously issued JWTs (embedded in the token payload, checked on auth).
+  tokenVersion Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  addresses      Address[]
+  cart           Cart?
+  wishlist       Wishlist?
+  orders         Order[]
+  reviews        Review[]
+  paymentIntents PaymentIntent[]
+  blogPosts      BlogPost[]
+
+  // Migration aid only — never exposed via any API. Lets the one-time
+  // Mongo->MySQL migration script detect already-migrated rows and be safely
+  // re-run without duplicating data.
+  legacyMongoId String? @unique
+
+  @@index([role])
+}
+
+model Address {
+  id          String   @id @default(uuid())
+  userId      String
+  fullName    String
+  phone       String
+  addressLine String
+  locality    String
+  city        String
+  state       String
+  pincode     String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  legacyMongoId String? @unique
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue
+// ---------------------------------------------------------------------------
+
+enum ProductStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?  @db.Text
+  image       String?
+  parentId    String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+
+  productsAsCategory    Product[] @relation("ProductCategory")
+  productsAsSubcategory Product[] @relation("ProductSubcategory")
+
+  legacyMongoId String? @unique
+
+  @@index([parentId])
+  @@index([isActive])
+}
+
+model Product {
+  id               String        @id @default(uuid())
+  name             String
+  slug             String        @unique
+  shortDescription String        @db.Text
+  description      String        @db.Text
+  howToUse         String?       @db.Text
+  sku              String        @unique
+  brand            String        @default("GreenKart")
+  categoryId       String
+  subcategoryId    String?
+  mrp              Decimal       @db.Decimal(10, 2)
+  salePrice        Decimal       @db.Decimal(10, 2)
+  stock            Int           @default(0)
+  featured         Boolean       @default(false)
+  bestSeller       Boolean       @default(false)
+  newArrival       Boolean       @default(false)
+  averageRating    Float         @default(0)
+  reviewCount      Int           @default(0)
+  seoTitle         String?
+  seoDescription   String?       @db.Text
+  status           ProductStatus @default(DRAFT)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  category    Category  @relation("ProductCategory", fields: [categoryId], references: [id], onDelete: Restrict)
+  subcategory Category? @relation("ProductSubcategory", fields: [subcategoryId], references: [id], onDelete: SetNull)
+
+  images             ProductImage[]
+  variants           ProductVariant[]
+  attributes         ProductAttribute[]
+  tags               ProductTag[]
+  reviews            Review[]
+  cartItems          CartItem[]
+  wishlistItems      WishlistItem[]
+  orderItems         OrderItem[]
+  paymentIntentLines PaymentIntentLine[]
+
+  legacyMongoId String? @unique
+
+  @@index([status])
+  @@index([categoryId, status])
+  @@index([salePrice])
+  @@index([bestSeller, newArrival, featured])
+}
+
+model ProductImage {
+  id        String   @id @default(uuid())
+  productId String
+  url       String
+  key       String   @default("")
+  alt       String   @default("")
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  width     Int?
+  height    Int?
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model ProductVariant {
+  id        String   @id @default(uuid())
+  productId String
+  sku       String   @unique
+  mrp       Decimal  @db.Decimal(10, 2)
+  salePrice Decimal  @db.Decimal(10, 2)
+  stock     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product    Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  images     VariantImage[]
+  attributes VariantAttribute[]
+
+  cartItems          CartItem[]
+  orderItems         OrderItem[]
+  paymentIntentLines PaymentIntentLine[]
+
+  legacyMongoId String? @unique
+
+  @@index([productId])
+}
+
+model VariantImage {
+  id        String @id @default(uuid())
+  variantId String
+  url       String
+  sortOrder Int    @default(0)
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([variantId])
+}
+
+// A variant-differentiating dynamic attribute (e.g. color=Red, size=Large,
+// packSize=1kg). Directly replaces the Mongo `variant.attributes: Record`
+// map — one row per key/value pair on a variant. Preserves today's exact
+// filter/facet semantics (product-list filtering matches variants whose
+// attributes include the selected value).
+model VariantAttribute {
+  id        String @id @default(uuid())
+  variantId String
+  key       String
+  value     String
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, key])
+  @@index([key, value])
+}
+
+// A product-level (non-variant-differentiating) descriptive attribute (e.g.
+// material, plantType, indoorOutdoor, sunlightRequirement,
+// wateringRequirement). New relative to the Mongo model — added so future
+// attributes can be filtered/displayed through the SAME `attr_<key>` URL
+// contract as variant attributes, without any product-listing architecture
+// change or new columns. No rows exist for legacy migrated data; this is
+// purely additive and does not change any existing filter's result set.
+model ProductAttribute {
+  id        String @id @default(uuid())
+  productId String
+  key       String
+  value     String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, key])
+  @@index([key, value])
+}
+
+model ProductTag {
+  id        String @id @default(uuid())
+  productId String
+  tag       String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, tag])
+  @@index([tag])
+}
+
+// ---------------------------------------------------------------------------
+// Commerce
+// ---------------------------------------------------------------------------
+
+model Cart {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cartId    String
+  productId String
+  variantId String?
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cart    Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  // No DB-level uniqueness constraint on (cartId, productId, variantId):
+  // the Mongo version had no such constraint either (Cart.items was a plain
+  // embedded array, deduped purely in application code by finding an
+  // existing line before pushing a new one). The Prisma repository
+  // replicates that exact find-existing-or-create behavior instead of
+  // relying on the database to enforce it, since a nullable variantId
+  // column would make a composite unique index ineffective for the
+  // no-variant case anyway (MySQL treats each NULL as distinct).
+  @@index([cartId])
+  @@index([productId])
+}
+
+model Wishlist {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  createdAt DateTime @default(now())
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items WishlistItem[]
+}
+
+model WishlistItem {
+  id         String   @id @default(uuid())
+  wishlistId String
+  productId  String
+  createdAt  DateTime @default(now())
+
+  wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([wishlistId, productId])
+}
+
+enum CouponType {
+  PERCENTAGE
+  FLAT
+  FREE_SHIPPING
+}
+
+model Coupon {
+  id            String     @id @default(uuid())
+  code          String     @unique
+  type          CouponType
+  value         Float      @default(0)
+  minOrderValue Float      @default(0)
+  maxDiscount   Float?
+  expiresAt     DateTime?
+  usageLimit    Int?
+  usedCount     Int        @default(0)
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  legacyMongoId String? @unique
+
+  @@index([code])
+}
+
+model Review {
+  id               String   @id @default(uuid())
+  productId        String
+  userId           String
+  rating           Int
+  title            String
+  description      String   @db.Text
+  verifiedPurchase Boolean  @default(false)
+  isApproved       Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  legacyMongoId String? @unique
+
+  @@unique([productId, userId])
+  @@index([productId])
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+enum PaymentMethod {
+  COD
+  ONLINE
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  COD
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  PACKED
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  RETURN_REQUESTED
+  RETURNED
+}
+
+model Order {
+  id          String @id @default(uuid())
+  orderNumber String @unique
+  userId      String
+
+  // Shipping address is a frozen snapshot at order time (never a live FK to
+  // Address), inlined as columns since it is always read together with the
+  // order and never queried independently — matches the Mongo embedded
+  // sub-document exactly, just without needing a child table for it.
+  shippingFullName    String
+  shippingPhone       String
+  shippingEmail       String
+  shippingAddressLine String
+  shippingLocality    String
+  shippingCity        String
+  shippingState       String
+  shippingPincode     String
+
+  subtotal   Decimal @db.Decimal(10, 2)
+  discount   Decimal @default(0) @db.Decimal(10, 2)
+  shipping   Decimal @default(0) @db.Decimal(10, 2)
+  tax        Decimal @default(0) @db.Decimal(10, 2)
+  grandTotal Decimal @db.Decimal(10, 2)
+  couponCode String?
+
+  paymentMethod     PaymentMethod
+  paymentStatus     PaymentStatus @default(PENDING)
+  razorpayOrderId   String?       @unique
+  razorpayPaymentId String?       @unique
+  orderStatus       OrderStatus   @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+  paymentIntent PaymentIntent?
+
+  legacyMongoId String? @unique
+
+  @@index([userId])
+  @@index([orderStatus, createdAt])
+  @@index([paymentStatus])
+}
+
+model OrderItem {
+  id           String  @id @default(uuid())
+  orderId      String
+  productId    String?
+  variantId    String?
+  productName  String
+  productImage String
+  sku          String
+  // Snapshot of the selected variant's attributes at order time
+  // (Record<string,string> | null) — arbitrary shape, not queried
+  // structurally, so JSON is the right fit here (unlike VariantAttribute,
+  // which IS queried structurally for filtering).
+  variant      Json?
+  quantity     Int
+  unitPrice    Decimal @db.Decimal(10, 2)
+  totalPrice   Decimal @db.Decimal(10, 2)
+
+  order      Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantRef ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+model OrderStatusHistory {
+  id        String   @id @default(uuid())
+  orderId   String
+  status    String
+  changedAt DateTime @default(now())
+  note      String?  @db.Text
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// ---------------------------------------------------------------------------
+// Payments (Razorpay, credential-ready but currently disabled)
+// ---------------------------------------------------------------------------
+
+enum PaymentIntentStatus {
+  CREATED
+  PROCESSING
+  PAID
+  FAILED
+  REQUIRES_REFUND
+}
+
+model PaymentIntent {
+  id                String              @id @default(uuid())
+  userId            String
+  razorpayOrderId   String              @unique
+  razorpayPaymentId String?
+  amount            Int
+  currency          String              @default("INR")
+  status            PaymentIntentStatus @default(CREATED)
+
+  // Fencing/lease token for the single-winner claim + stale-processing
+  // reclaim pattern (see payment.repository.ts). Replaces the Mongo
+  // version's `processingStartedAt`-equality compare-and-swap: an
+  // incrementing integer avoids datetime-precision mismatches between JS
+  // Date objects and MySQL DATETIME column rounding, and is compared with
+  // exact integer equality instead.
+  fencingToken        Int       @default(0)
+  processingStartedAt DateTime?
+  failureReason       String?   @db.Text
+
+  couponCode String?
+
+  shippingFullName    String
+  shippingPhone       String
+  shippingEmail       String
+  shippingAddressLine String
+  shippingLocality    String
+  shippingCity        String
+  shippingState       String
+  shippingPincode     String
+
+  subtotal   Decimal @db.Decimal(10, 2)
+  discount   Decimal @default(0) @db.Decimal(10, 2)
+  shipping   Decimal @default(0) @db.Decimal(10, 2)
+  tax        Decimal @default(0) @db.Decimal(10, 2)
+  grandTotal Decimal @db.Decimal(10, 2)
+
+  orderId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order Order?              @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  lines PaymentIntentLine[]
+
+  @@index([status])
+  @@index([razorpayPaymentId])
+}
+
+model PaymentIntentLine {
+  id              String  @id @default(uuid())
+  paymentIntentId String
+  productId       String
+  variantId       String?
+  variantSku      String?
+  name            String
+  image           String
+  variant         Json?
+  quantity        Int
+  unitPrice       Decimal @db.Decimal(10, 2)
+  totalPrice      Decimal @db.Decimal(10, 2)
+
+  paymentIntent PaymentIntent   @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  variantRef    ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([paymentIntentId])
+}
+
+// ---------------------------------------------------------------------------
+// Misc
+// ---------------------------------------------------------------------------
+
+model NewsletterSubscriber {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  legacyMongoId String? @unique
+}
+
+enum BlogCategory {
+  GARDENING_TIPS
+  HOME_GARDENING
+  PLANT_CARE
+  FERTILIZERS
+  DIY_GARDENING
+}
+
+model BlogPost {
+  id          String       @id @default(uuid())
+  title       String
+  slug        String       @unique
+  category    BlogCategory
+  excerpt     String       @db.Text
+  content     String       @db.LongText
+  coverImage  String
+  authorId    String?
+  isPublished Boolean      @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  legacyMongoId String? @unique
+
+  @@index([isPublished])
+}
+
+// Singleton settings row, addressed by the fixed key "default" — mirrors the
+// exact convention already used everywhere in the Mongo version
+// (`SiteSettings.findOneAndUpdate({key:'default'}, ..., {upsert:true})`).
+model SiteSettings {
+  key                   String  @id @default("default")
+  announcementText      String  @default("") @db.VarChar(500)
+  freeShippingThreshold Float   @default(999)
+  standardShippingFee   Float   @default(79)
+  whatsappNumber        String  @default("919999999999")
+  contactEmail          String  @default("")
+  contactPhone          String  @default("")
+  contactAddress        String  @default("") @db.VarChar(500)
+  workingHours          String  @default("")
+  socialInstagram       String?
+  socialFacebook        String?
+  socialYoutube         String?
+  socialLinkedin        String?
+}
+
+enum BulkOrderStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  CONVERTED
+  CLOSED
+}
+
+model BulkOrderInquiry {
+  id                   String          @id @default(uuid())
+  fullName             String
+  email                String
+  mobile               String
+  pincode              String
+  company              String?
+  product              String?
+  requirement          String?         @db.Text
+  message              String?         @db.Text
+  quantity             Int
+  targetPrice          Float?
+  expectedPurchaseDate DateTime?
+  status               BulkOrderStatus @default(NEW)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  legacyMongoId String? @unique
+}

@@ -5,7 +5,7 @@ export interface UploadOptions {
 
 /**
  * Storage is abstracted behind this interface so the local-disk
- * implementation (BigRock/any normal Linux host) can later be swapped for
+ * implementation (Hostinger/any normal Linux host) can later be swapped for
  * S3/R2/Spaces without touching any caller (upload controller, product
  * controller, etc) — they only ever deal in opaque storage keys and public
  * URLs, never filesystem paths.

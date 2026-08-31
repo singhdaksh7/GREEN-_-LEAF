@@ -1,9 +1,15 @@
-import mongoose from 'mongoose';
-import { env } from './env';
+import { PrismaClient } from '@prisma/client';
+
+// Single shared Prisma client for the whole app (repositories import this,
+// never instantiate their own PrismaClient) — this is the standard
+// recommended pattern to avoid exhausting MySQL connections under load.
+export const prisma = new PrismaClient();
 
 export async function connectDatabase(): Promise<void> {
-  mongoose.set('strictQuery', true);
-  await mongoose.connect(env.mongodbUri);
-  // eslint-disable-next-line no-console
-  console.log(`[db] connected to MongoDB at ${mongoose.connection.host}/${mongoose.connection.name}`);
+  await prisma.$connect();
+  console.log('[db] connected to MySQL');
+}
+
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
 }

@@ -6,8 +6,9 @@ import { timingSafeEqualHex, computeHmacSha256Hex, isRazorpayConfigured } from '
 import * as paymentService from '../services/payment.service';
 
 // This endpoint deliberately exposes only an enablement flag. It lets the
-// checkout adapt when credentials are added in Render later without leaking
-// keys or requiring a frontend deployment/configuration change.
+// checkout adapt when Razorpay credentials are added to the hosting
+// environment later without leaking keys or requiring a frontend
+// deployment/configuration change.
 export const razorpayConfigHandler = (_req: Request, res: Response) => {
   sendSuccess(res, { enabled: isRazorpayConfigured() });
 };

@@ -1,22 +1,23 @@
 import { Request, Response } from 'express';
+import { Category } from '@prisma/client';
 import { asyncHandler } from '../utils/asyncHandler';
 import { sendSuccess } from '../utils/ApiResponse';
 import { ApiError } from '../utils/ApiError';
-import { Category } from '../models/Category';
+import * as categoryRepository from '../repositories/category.repository';
 
 export const listCategories = asyncHandler(async (_req: Request, res: Response) => {
-  const categories = await Category.find({ isActive: true }).sort({ order: 1, name: 1 }).lean();
+  const categories = await categoryRepository.listActiveCategories();
 
-  const byParent = new Map<string, typeof categories>();
+  const byParent = new Map<string, Category[]>();
   for (const cat of categories) {
-    const key = cat.parent ? String(cat.parent) : 'root';
+    const key = cat.parentId ?? 'root';
     if (!byParent.has(key)) byParent.set(key, []);
     byParent.get(key)!.push(cat);
   }
 
-  const attachChildren = (cat: (typeof categories)[number]): unknown => ({
+  const attachChildren = (cat: Category): unknown => ({
     ...cat,
-    children: (byParent.get(String(cat._id)) ?? []).map(attachChildren),
+    children: (byParent.get(cat.id) ?? []).map(attachChildren),
   });
 
   const tree = (byParent.get('root') ?? []).map(attachChildren);
@@ -24,9 +25,9 @@ export const listCategories = asyncHandler(async (_req: Request, res: Response) 
 });
 
 export const getCategoryBySlug = asyncHandler(async (req: Request, res: Response) => {
-  const category = await Category.findOne({ slug: req.params.slug, isActive: true }).lean();
+  const category = await categoryRepository.findCategoryBySlug(req.params.slug);
   if (!category) throw ApiError.notFound('Category not found');
 
-  const children = await Category.find({ parent: category._id, isActive: true }).sort({ order: 1 }).lean();
+  const children = await categoryRepository.findChildCategories(category.id);
   sendSuccess(res, { ...category, children }, 'Category retrieved successfully');
 });
