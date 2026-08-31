@@ -1,76 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 // This file covers createRazorpayOrder's pure business-rule validation
 // (empty cart, out-of-stock lines, missing configuration, amount
-// calculation) with lightweight mocked models. The finalization path
-// (verifyAndFinalizePayment / processWebhookEvent) now runs inside a real
-// MongoDB transaction and is covered instead by
-// payment.finalize.integration.test.ts against a transaction-capable
-// mongodb-memory-server replica set — see that file for why.
-
-const mocks = vi.hoisted(() => {
-  const products = new Map<string, any>();
-
-  return {
-    products,
-    reset() {
-      products.clear();
-    },
-  };
-});
-
-vi.mock('../src/models/PaymentIntent', () => ({
-  PaymentIntent: {
-    create: vi.fn(async (doc: any) => ({ ...doc, _id: 'intent_1' })),
-  },
-}));
-
-vi.mock('../src/models/Coupon', () => ({
-  Coupon: {
-    findOne: vi.fn(async () => null),
-  },
-}));
-
-// payment.service.ts imports Order/Product at module scope even though
-// createRazorpayOrder itself never calls them directly (only cartService,
-// which is mocked below, touches pricing/stock). Without these mocks, every
-// vi.resetModules() + dynamic re-import in this file would re-register the
-// real Mongoose models on the shared mongoose singleton and throw
-// "Cannot overwrite model once compiled" on the second test.
-vi.mock('../src/models/Order', () => ({
-  Order: { create: vi.fn(), findById: vi.fn() },
-}));
-
-vi.mock('../src/models/Product', () => ({
-  Product: { findOneAndUpdate: vi.fn() },
-}));
-
-vi.mock('../src/services/cart.service', () => ({
-  getOrCreateCart: vi.fn(async () => ({ items: [{ product: 'prod1', variantSku: null, quantity: 2 }] })),
-  priceCart: vi.fn(async () => ({
-    lines: [
-      {
-        productId: 'prod1',
-        slug: 'garden-hose',
-        variantSku: null,
-        name: 'Garden Hose',
-        image: 'hose.jpg',
-        variant: null,
-        quantity: 2,
-        unitPrice: 100,
-        mrp: 120,
-        totalPrice: 200,
-        stock: mocks.products.get('prod1')?.stock ?? 10,
-        inStock: (mocks.products.get('prod1')?.stock ?? 10) >= 2,
-      },
-    ],
-    subtotal: 200,
-    shipping: 79,
-    freeShippingThreshold: 999,
-    amountToFreeShipping: 799,
-  })),
-  clearCart: vi.fn(async () => {}),
-}));
+// calculation). It runs against the real MySQL test database (via
+// cart/coupon repositories and Prisma directly, exactly like production)
+// rather than mocking the persistence layer — only the outbound Razorpay
+// SDK call is mocked, since we never want a test run to hit the real
+// Razorpay API. The finalization path (verifyAndFinalizePayment /
+// processWebhookEvent) is covered separately in
+// test/integration/payment.finalize.test.ts.
 
 vi.mock('../src/utils/razorpay', async () => {
   const actual = await vi.importActual<typeof import('../src/utils/razorpay')>('../src/utils/razorpay');
@@ -81,21 +19,24 @@ vi.mock('../src/utils/razorpay', async () => {
   };
 });
 
-const USER_ID = 'user_1';
+import { setupTestDb, teardownTestDb, clearTestDb } from './helpers/testDb';
+import { createUser, createCategory, createProduct } from './helpers/factories';
+import { prisma } from '../src/config/db';
+import * as cartRepository from '../src/repositories/cart.repository';
+import * as paymentRepository from '../src/repositories/payment.repository';
+import * as razorpayUtil from '../src/utils/razorpay';
 
-async function loadService(configured = true) {
-  vi.resetModules();
-  if (configured) {
-    process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
-    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
-  } else {
-    delete process.env.RAZORPAY_KEY_ID;
-    delete process.env.RAZORPAY_KEY_SECRET;
-  }
-  const razorpayUtil = await import('../src/utils/razorpay');
-  const service = await import('../src/services/payment.service');
-  return { service, razorpayUtil };
-}
+beforeAll(async () => {
+  await setupTestDb();
+}, 120000);
+
+afterEach(async () => {
+  await clearTestDb();
+});
+
+afterAll(async () => {
+  await teardownTestDb();
+});
 
 function addressFixture() {
   return {
@@ -110,70 +51,70 @@ function addressFixture() {
   };
 }
 
-function baseLine() {
-  return {
-    productId: 'prod1',
-    slug: 'garden-hose',
-    variantSku: null,
+async function seedCartWithOneItem(userId: string, overrides: { stock?: number; salePrice?: number } = {}) {
+  const category = await createCategory();
+  const product = await createProduct(category.id, {
     name: 'Garden Hose',
-    image: 'hose.jpg',
-    variant: null,
-    quantity: 2,
-    unitPrice: 100,
+    salePrice: overrides.salePrice ?? 100,
     mrp: 120,
-    totalPrice: 200,
     stock: 10,
-    inStock: true,
-  };
+  });
+  await cartRepository.addItemToCart(userId, product.id, null, 2);
+
+  // Applied after adding to the cart (which itself checks stock) to
+  // simulate a race where stock is depleted by someone else between
+  // add-to-cart and checkout.
+  if (overrides.stock !== undefined) {
+    await prisma.product.update({ where: { id: product.id }, data: { stock: overrides.stock } });
+  }
+  return product;
 }
 
-describe('payment.service.createRazorpayOrder', () => {
+describe('payment.repository.createRazorpayOrder', () => {
   beforeEach(() => {
-    mocks.reset();
-    mocks.products.set('prod1', { _id: 'prod1', name: 'Garden Hose', stock: 10, variants: [] });
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
   });
 
   it('throws when Razorpay is not configured', async () => {
-    const { service } = await loadService(false);
-    const cartService = await import('../src/services/cart.service');
+    const user = await createUser();
+    await seedCartWithOneItem(user.id);
 
-    await expect(service.createRazorpayOrder(USER_ID, addressFixture(), null)).rejects.toMatchObject({
+    await expect(paymentRepository.createRazorpayOrder(user.id, addressFixture(), null)).rejects.toMatchObject({
       statusCode: 503,
       message: 'Online payments are not available yet',
     });
-    expect(cartService.getOrCreateCart).not.toHaveBeenCalled();
   });
 
   it('rejects when the cart is empty', async () => {
-    const { service } = await loadService();
-    const cartService = await import('../src/services/cart.service');
-    vi.mocked(cartService.getOrCreateCart).mockResolvedValueOnce({ items: [] } as any);
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
+    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+    const user = await createUser();
 
-    await expect(service.createRazorpayOrder(USER_ID, addressFixture(), null)).rejects.toThrow(/cart is empty/i);
+    await expect(paymentRepository.createRazorpayOrder(user.id, addressFixture(), null)).rejects.toThrow(/cart is empty/i);
   });
 
   it('rejects when a cart line is out of stock', async () => {
-    const { service } = await loadService();
-    const cartService = await import('../src/services/cart.service');
-    vi.mocked(cartService.priceCart).mockResolvedValueOnce({
-      lines: [{ ...baseLine(), inStock: false, name: 'Garden Hose' }],
-      subtotal: 200,
-      shipping: 79,
-      freeShippingThreshold: 999,
-      amountToFreeShipping: 799,
-    } as any);
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
+    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+    const user = await createUser();
+    await seedCartWithOneItem(user.id, { stock: 1 });
 
-    await expect(service.createRazorpayOrder(USER_ID, addressFixture(), null)).rejects.toThrow(/insufficient stock/i);
+    await expect(paymentRepository.createRazorpayOrder(user.id, addressFixture(), null)).rejects.toThrow(/insufficient stock/i);
   });
 
   it('creates a Razorpay order for the server-calculated amount, converted to paise', async () => {
-    const { service, razorpayUtil } = await loadService();
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
+    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+    const user = await createUser();
+    await seedCartWithOneItem(user.id);
+
     const create = vi.fn().mockResolvedValue({ id: 'order_rzp_1' });
-    vi.mocked(razorpayUtil.getRazorpayClient).mockReturnValue({ orders: { create } } as any);
+    vi.mocked(razorpayUtil.getRazorpayClient).mockReturnValue({ orders: { create } } as never);
 
-    const result = await service.createRazorpayOrder(USER_ID, addressFixture(), null);
+    const result = await paymentRepository.createRazorpayOrder(user.id, addressFixture(), null);
 
-    // subtotal 200 + shipping 79 = 279 rupees => 27900 paise
+    // subtotal 200 (2 x 100) + shipping 79 = 279 rupees => 27900 paise
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ amount: 27900, currency: 'INR' }));
     expect(result).toEqual(expect.objectContaining({ orderId: 'order_rzp_1', amount: 27900, currency: 'INR' }));
   });

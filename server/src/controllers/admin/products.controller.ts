@@ -66,5 +66,7 @@ export const updateAdminProduct = asyncHandler(async (req: Request, res: Respons
 export const deleteAdminProduct = asyncHandler(async (req: Request, res: Response) => {
   const product = await productRepository.archiveProduct(req.params.id);
   if (!product) throw ApiError.notFound('Product not found');
-  sendSuccess(res, product, 'Product archived successfully');
+  // Derived from `status`, never stored — see toApiProduct in
+  // product.repository.ts for why.
+  sendSuccess(res, { ...product, isActive: product.status === 'PUBLISHED' }, 'Product archived successfully');
 });

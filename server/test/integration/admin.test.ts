@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createApp } from '../../src/app';
 import { setupTestDb, teardownTestDb, clearTestDb } from '../helpers/testDb';
 import { createUser, authHeaderFor, createCategory, createProduct } from '../helpers/factories';
-import { Product } from '../../src/models/Product';
+import { prisma } from '../../src/config/db';
 import { storageProvider } from '../../src/storage';
 
 const app = createApp();
@@ -88,8 +88,8 @@ describe('PATCH /api/admin/products/:id', () => {
     expect(res.body.data.variants).toHaveLength(1);
     expect(res.body.data.variants[0].sku).toBe('VAR-1');
 
-    const persisted = await Product.findById(product.id);
-    expect(persisted!.tags).toEqual(['bestseller', 'indoor']);
+    const persisted = await prisma.product.findUnique({ where: { id: product.id }, include: { tags: true, variants: true } });
+    expect(persisted!.tags.map((t) => t.tag)).toEqual(['bestseller', 'indoor']);
     expect(persisted!.variants).toHaveLength(1);
   });
 });

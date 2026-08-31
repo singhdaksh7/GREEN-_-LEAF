@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { beforeAll, afterAll, afterEach, describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../src/app';
-import { User } from '../../src/models/User';
+import { prisma } from '../../src/config/db';
 import { setupTestDb, teardownTestDb, clearTestDb } from '../helpers/testDb';
 
 const app = createApp();
@@ -38,7 +38,7 @@ describe('POST /api/auth/register', () => {
       expect.stringContaining('refreshToken='),
     ]));
 
-    const user = await User.findOne({ email: validUser.email }).select('+passwordHash');
+    const user = await prisma.user.findUnique({ where: { email: validUser.email } });
     expect(user?.name).toBe(validUser.name);
     expect(user?.passwordHash).not.toBe(validUser.password);
     expect(await bcrypt.compare(validUser.password, user!.passwordHash)).toBe(true);
@@ -58,7 +58,7 @@ describe('POST /api/auth/register', () => {
   ])('rejects invalid or privilege-escalating registration payloads', async (payload) => {
     const res = await request(app).post('/api/auth/register').send(payload);
     expect(res.status).toBe(400);
-    expect(await User.countDocuments()).toBe(0);
+    expect(await prisma.user.count()).toBe(0);
   });
 });
 

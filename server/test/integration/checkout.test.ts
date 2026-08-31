@@ -3,8 +3,7 @@ import request from 'supertest';
 import { createApp } from '../../src/app';
 import { setupTestDb, teardownTestDb, clearTestDb } from '../helpers/testDb';
 import { createUser, authHeaderFor, createCategory, createProduct, createCoupon } from '../helpers/factories';
-import { Product } from '../../src/models/Product';
-import { Coupon } from '../../src/models/Coupon';
+import { prisma } from '../../src/config/db';
 
 const app = createApp();
 
@@ -53,7 +52,7 @@ describe('checkout / order creation', () => {
     expect(res.body.data.subtotal).toBe(750);
     expect(res.body.data.paymentStatus).toBe('COD');
 
-    const updated = await Product.findById(product.id);
+    const updated = await prisma.product.findUnique({ where: { id: product.id } });
     expect(updated!.stock).toBe(7);
   });
 
@@ -67,7 +66,7 @@ describe('checkout / order creation', () => {
     // draining stock from under the cart before checkout to simulate a
     // race with another shopper.
     await addToCart(token, product.id, 2);
-    await Product.findByIdAndUpdate(product.id, { stock: 0 });
+    await prisma.product.update({ where: { id: product.id }, data: { stock: 0 } });
 
     const res = await request(app)
       .post('/api/orders')
@@ -75,7 +74,7 @@ describe('checkout / order creation', () => {
       .send({ shippingAddress: address, paymentMethod: 'COD', couponCode: null });
 
     expect(res.status).toBe(400);
-    const unchanged = await Product.findById(product.id);
+    const unchanged = await prisma.product.findUnique({ where: { id: product.id } });
     expect(unchanged!.stock).toBe(0);
   });
 
@@ -96,7 +95,7 @@ describe('checkout / order creation', () => {
     expect(res.status).toBe(201);
     expect(res.body.data.discount).toBe(100);
 
-    const updatedCoupon = await Coupon.findById(coupon.id);
+    const updatedCoupon = await prisma.coupon.findUnique({ where: { id: coupon.id } });
     expect(updatedCoupon!.usedCount).toBe(1);
   });
 
@@ -138,7 +137,7 @@ describe('checkout / order creation', () => {
     const successCount = results.filter((r) => r.status === 201).length;
     expect(successCount).toBe(1);
 
-    const finalCoupon = await Coupon.findById(coupon.id);
+    const finalCoupon = await prisma.coupon.findUnique({ where: { id: coupon.id } });
     expect(finalCoupon!.usedCount).toBe(1);
   });
 
@@ -149,24 +148,24 @@ describe('checkout / order creation', () => {
     const product = await createProduct(category.id, { stock: 3 });
 
     await addToCart(token, product.id, 1);
-    await Product.findByIdAndUpdate(product.id, { stock: 0 });
+    await prisma.product.update({ where: { id: product.id }, data: { stock: 0 } });
 
     await request(app)
       .post('/api/orders')
       .set('Authorization', token)
       .send({ shippingAddress: address, paymentMethod: 'COD', couponCode: null });
 
-    const afterFailedCheckout = await Product.findById(product.id);
+    const afterFailedCheckout = await prisma.product.findUnique({ where: { id: product.id } });
     expect(afterFailedCheckout!.stock).toBe(0);
 
-    await Product.findByIdAndUpdate(product.id, { stock: 5 });
+    await prisma.product.update({ where: { id: product.id }, data: { stock: 5 } });
     const res = await request(app)
       .post('/api/orders')
       .set('Authorization', token)
       .send({ shippingAddress: address, paymentMethod: 'COD', couponCode: null });
 
     expect(res.status).toBe(201);
-    const afterSuccess = await Product.findById(product.id);
+    const afterSuccess = await prisma.product.findUnique({ where: { id: product.id } });
     expect(afterSuccess!.stock).toBe(4);
   });
 });

@@ -29,6 +29,10 @@ describe('razorpay utils', () => {
   it('reports configured when both key id and secret are present', async () => {
     process.env.RAZORPAY_KEY_ID = 'rzp_test_123';
     process.env.RAZORPAY_KEY_SECRET = 'secret123';
+    // env.ts fails fast on a partial Razorpay configuration (see
+    // config/env.ts) — the webhook secret must also be set for this to be a
+    // valid state to import `env` (and therefore this module) under at all.
+    process.env.RAZORPAY_WEBHOOK_SECRET = 'whsec_test_123';
     const { isRazorpayConfigured } = await import('../src/utils/razorpay');
     expect(isRazorpayConfigured()).toBe(true);
   });

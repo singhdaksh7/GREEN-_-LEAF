@@ -69,6 +69,10 @@ export function toApiProduct(product: ProductWithRelations) {
   const { variants, tags, ...rest } = product;
   return {
     ...rest,
+    // Derived from `status`, never stored — see the schema.prisma comment on
+    // why `isActive` was intentionally not carried over as a persisted
+    // column. Kept only for frontend/admin-UI backward compatibility.
+    isActive: product.status === 'PUBLISHED',
     variants: variants.map((variant) => {
       const { attributes, images, ...variantRest } = variant;
       return {

@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { Coupon } from '@prisma/client';
 import { computeShipping, applyCoupon, validateCouponEligibility, resolveProductPrice } from '../src/services/pricing.service';
-import { ICoupon } from '../src/models/Coupon';
-import { IProduct } from '../src/models/Product';
+import { ProductWithRelations } from '../src/repositories/product.repository';
 
-function makeCoupon(overrides: Partial<ICoupon> = {}): ICoupon {
+function makeCoupon(overrides: Partial<Coupon> = {}): Coupon {
   return {
+    id: 'coupon-1',
     code: 'TEST10',
     type: 'PERCENTAGE',
     value: 10,
@@ -14,23 +15,40 @@ function makeCoupon(overrides: Partial<ICoupon> = {}): ICoupon {
     usageLimit: null,
     usedCount: 0,
     isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    legacyMongoId: null,
     ...overrides,
-  } as ICoupon;
+  } as Coupon;
 }
 
-function makeProduct(overrides: Partial<IProduct> = {}): IProduct {
+function makeProduct(overrides: Record<string, unknown> = {}): ProductWithRelations {
   return {
+    id: 'product-1',
     name: 'Test Product',
+    slug: 'test-product',
     sku: 'SKU-1',
     mrp: 200,
     salePrice: 150,
     stock: 10,
-    images: [{ url: 'main.jpg', key: '', alt: '', isPrimary: true, sortOrder: 0 }],
+    images: [{ id: 'img-1', productId: 'product-1', url: 'main.jpg', key: '', alt: '', isPrimary: true, sortOrder: 0, width: null, height: null, createdAt: new Date() }],
     variants: [
-      { sku: 'SKU-1-V1', attributes: { size: 'Large' }, mrp: 300, salePrice: 220, stock: 5, images: ['variant.jpg'] },
+      {
+        id: 'variant-1',
+        productId: 'product-1',
+        sku: 'SKU-1-V1',
+        mrp: 300,
+        salePrice: 220,
+        stock: 5,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        legacyMongoId: null,
+        attributes: [{ id: 'attr-1', variantId: 'variant-1', key: 'size', value: 'Large' }],
+        images: [{ id: 'vimg-1', variantId: 'variant-1', url: 'variant.jpg', sortOrder: 0 }],
+      },
     ],
     ...overrides,
-  } as IProduct;
+  } as unknown as ProductWithRelations;
 }
 
 describe('computeShipping', () => {

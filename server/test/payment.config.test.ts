@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-vi.mock('../src/services/payment.service', () => ({}));
+vi.mock('../src/repositories/payment.repository', () => ({}));
 
 async function buildApp() {
   const { razorpayConfigHandler } = await import('../src/controllers/payment.controller');
@@ -19,6 +19,7 @@ describe('Razorpay configuration endpoint', () => {
   it('reports disabled without exposing credentials when keys are absent', async () => {
     delete process.env.RAZORPAY_KEY_ID;
     delete process.env.RAZORPAY_KEY_SECRET;
+    delete process.env.RAZORPAY_WEBHOOK_SECRET;
     const app = await buildApp();
 
     const res = await request(app).get('/config');
@@ -31,6 +32,7 @@ describe('Razorpay configuration endpoint', () => {
   it('automatically reports enabled when both runtime keys are configured', async () => {
     process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
     process.env.RAZORPAY_KEY_SECRET = 'test_secret';
+    process.env.RAZORPAY_WEBHOOK_SECRET = 'whsec_test';
     const app = await buildApp();
 
     const res = await request(app).get('/config');

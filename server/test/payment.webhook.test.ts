@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 
 const WEBHOOK_SECRET = 'whsec_test_123';
 
-vi.mock('../src/services/payment.service', () => ({
+vi.mock('../src/repositories/payment.repository', () => ({
   processWebhookEvent: vi.fn(async () => {}),
 }));
 
@@ -24,12 +24,16 @@ describe('razorpay webhook signature verification', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    // env.ts fails fast on a partial Razorpay configuration — all three
+    // vars (or none) must be set for `env` to even be importable.
+    process.env.RAZORPAY_KEY_ID = 'rzp_test_key';
+    process.env.RAZORPAY_KEY_SECRET = 'test_secret';
     process.env.RAZORPAY_WEBHOOK_SECRET = WEBHOOK_SECRET;
   });
 
   it('accepts a payload with a valid signature and forwards it for processing', async () => {
     const app = await buildApp();
-    const paymentService = await import('../src/services/payment.service');
+    const paymentService = await import('../src/repositories/payment.repository');
     const body = JSON.stringify({ event: 'order.paid', payload: {} });
 
     const res = await request(app)
@@ -45,7 +49,7 @@ describe('razorpay webhook signature verification', () => {
 
   it('rejects a payload with an invalid signature and does not process it', async () => {
     const app = await buildApp();
-    const paymentService = await import('../src/services/payment.service');
+    const paymentService = await import('../src/repositories/payment.repository');
     const body = JSON.stringify({ event: 'order.paid', payload: {} });
 
     const res = await request(app)
@@ -60,7 +64,7 @@ describe('razorpay webhook signature verification', () => {
 
   it('rejects a payload with a tampered body even if the signature was valid for the original body', async () => {
     const app = await buildApp();
-    const paymentService = await import('../src/services/payment.service');
+    const paymentService = await import('../src/repositories/payment.repository');
     const originalBody = JSON.stringify({ event: 'order.paid', payload: {} });
     const signature = sign(originalBody);
     const tamperedBody = JSON.stringify({ event: 'order.paid', payload: { tampered: true } });
@@ -86,6 +90,11 @@ describe('razorpay webhook signature verification', () => {
   });
 
   it('returns 503 when the webhook secret is not configured', async () => {
+    // 0-of-3 Razorpay vars set is the other valid state (COD-only) besides
+    // all-3 — this is the realistic way a deployment ends up with no
+    // webhook secret configured.
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
     delete process.env.RAZORPAY_WEBHOOK_SECRET;
     const app = await buildApp();
     const body = JSON.stringify({ event: 'order.paid', payload: {} });
